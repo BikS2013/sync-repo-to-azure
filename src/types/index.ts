@@ -8,6 +8,11 @@ export {
 } from "./config.types";
 
 export {
+  ApiConfig,
+  ApiResolvedConfig,
+} from "./api-config.types";
+
+export {
   CommandResult,
   CommandError,
   CommandMetadata,

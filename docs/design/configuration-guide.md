@@ -385,6 +385,140 @@ Store in the `.azure-fs.json` config file. A value of `10` is recommended as a s
 
 ---
 
+## API Configuration Parameters
+
+These parameters configure the REST API server started via `npm run api`. They are only required when running in API mode and are ignored by the CLI.
+
+### `api.port`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | The TCP port number the API server listens on. |
+| **Required** | Yes (when running in API mode) |
+| **Type** | Integer (1-65535) |
+| **Config file key** | `api.port` |
+| **Environment variable** | `AZURE_FS_API_PORT` |
+| **CLI flag** | Not available |
+
+**How to obtain:**
+Choose any available port. Common choices are `3000` (development), `8080` (alternative), or `80`/`443` (production behind a reverse proxy).
+
+**Recommended management:**
+Store in the `.env` file for development. Use environment variables in CI/CD and production deployments.
+
+---
+
+### `api.host`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | The network interface (IP address) the API server binds to. |
+| **Required** | Yes (when running in API mode) |
+| **Type** | String (IP address or hostname) |
+| **Config file key** | `api.host` |
+| **Environment variable** | `AZURE_FS_API_HOST` |
+| **CLI flag** | Not available |
+
+**Options:**
+
+| Value | Description |
+|-------|-------------|
+| `0.0.0.0` | Listen on all network interfaces (accessible from other machines). |
+| `127.0.0.1` | Listen only on localhost (accessible only from the same machine). |
+
+**Recommended management:**
+Use `0.0.0.0` for containerized/production deployments. Use `127.0.0.1` when running locally and you do not want external access.
+
+---
+
+### `api.corsOrigins`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Controls which origins are allowed to make cross-origin requests to the API. |
+| **Required** | Yes (when running in API mode) |
+| **Type** | Comma-separated string (env) or array of strings (config file) |
+| **Config file key** | `api.corsOrigins` |
+| **Environment variable** | `AZURE_FS_API_CORS_ORIGINS` |
+| **CLI flag** | Not available |
+
+**Options:**
+
+| Value | Description |
+|-------|-------------|
+| `*` | Allow all origins (suitable for development or internal APIs). |
+| Specific URLs | Comma-separated list of allowed origins (e.g., `http://localhost:3000,https://myapp.com`). |
+
+**Recommended management:**
+Use `*` for development. In production, restrict to the specific origins that need access.
+
+---
+
+### `api.swaggerEnabled`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Enables or disables the Swagger UI documentation endpoint at `/api/docs` and the JSON spec at `/api/docs.json`. |
+| **Required** | Yes (when running in API mode) |
+| **Type** | Boolean |
+| **Config file key** | `api.swaggerEnabled` |
+| **Environment variable** | `AZURE_FS_API_SWAGGER_ENABLED` |
+| **CLI flag** | Not available |
+
+**Options:**
+
+| Value | Description |
+|-------|-------------|
+| `true` | Swagger UI is served at `/api/docs`. |
+| `false` | Swagger endpoints are not mounted. |
+
+**Recommended management:**
+Enable in development and staging. Disable in production if the API is not intended for public exploration.
+
+---
+
+### `api.uploadMaxSizeMb`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Maximum allowed file size (in megabytes) for upload requests via the API. Requests exceeding this limit are rejected with a 413 status. |
+| **Required** | Yes (when running in API mode) |
+| **Type** | Positive integer (megabytes) |
+| **Config file key** | `api.uploadMaxSizeMb` |
+| **Environment variable** | `AZURE_FS_API_UPLOAD_MAX_SIZE_MB` |
+| **CLI flag** | Not available |
+
+**How to choose a value:**
+- `100` is suitable for most document/data upload scenarios.
+- Increase for large media files or dataset uploads.
+- Azure Blob Storage supports blobs up to 190.7 TiB, but practical limits depend on network and memory.
+
+**Recommended management:**
+Store in the `.azure-fs.json` config file or `.env` file.
+
+---
+
+### `api.requestTimeoutMs`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Maximum time (in milliseconds) a request is allowed to run before it is automatically aborted. Prevents hung connections from consuming server resources. |
+| **Required** | Yes (when running in API mode) |
+| **Type** | Positive integer (milliseconds) |
+| **Config file key** | `api.requestTimeoutMs` |
+| **Environment variable** | `AZURE_FS_API_REQUEST_TIMEOUT_MS` |
+| **CLI flag** | Not available |
+
+**How to choose a value:**
+- `30000` (30 seconds) is appropriate for most operations.
+- Increase for large file uploads/downloads or operations over slow connections.
+- `60000` (60 seconds) or higher for very large blob transfers.
+
+**Recommended management:**
+Store in the `.azure-fs.json` config file or `.env` file.
+
+---
+
 ## Config File Reference
 
 The config file (`.azure-fs.json`) is the recommended way to store non-secret configuration. Below is a complete example with all fields:
@@ -409,6 +543,14 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
   },
   "batch": {
     "concurrency": 10
+  },
+  "api": {
+    "port": 3000,
+    "host": "0.0.0.0",
+    "corsOrigins": ["*"],
+    "swaggerEnabled": true,
+    "uploadMaxSizeMb": 100,
+    "requestTimeoutMs": 30000
   }
 }
 ```
@@ -439,6 +581,12 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
 | `AZURE_FS_RETRY_INITIAL_DELAY_MS` | `retry.initialDelayMs` | Yes (if not in config file, when strategy is not `none`) |
 | `AZURE_FS_RETRY_MAX_DELAY_MS` | `retry.maxDelayMs` | Yes (if not in config file, when strategy is not `none`) |
 | `AZURE_FS_BATCH_CONCURRENCY` | `batch.concurrency` | Yes (if not in config file) |
+| `AZURE_FS_API_PORT` | `api.port` | Yes (API mode only) |
+| `AZURE_FS_API_HOST` | `api.host` | Yes (API mode only) |
+| `AZURE_FS_API_CORS_ORIGINS` | `api.corsOrigins` | Yes (API mode only) |
+| `AZURE_FS_API_SWAGGER_ENABLED` | `api.swaggerEnabled` | Yes (API mode only) |
+| `AZURE_FS_API_UPLOAD_MAX_SIZE_MB` | `api.uploadMaxSizeMb` | Yes (API mode only) |
+| `AZURE_FS_API_REQUEST_TIMEOUT_MS` | `api.requestTimeoutMs` | Yes (API mode only) |
 
 ---
 

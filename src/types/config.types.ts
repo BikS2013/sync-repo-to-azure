@@ -1,3 +1,5 @@
+import { ApiConfig } from "./api-config.types";
+
 /**
  * Authentication methods supported by azure-fs.
  *
@@ -42,6 +44,14 @@ export interface AzureFsConfigFile {
   batch?: {
     concurrency?: number;
   };
+  api?: {
+    port?: number;
+    host?: string;
+    corsOrigins?: string[];
+    swaggerEnabled?: boolean;
+    uploadMaxSizeMb?: number;
+    requestTimeoutMs?: number;
+  };
 }
 
 /**
@@ -81,4 +91,5 @@ export interface ResolvedConfig {
   batch: {
     concurrency: number;
   };
+  api?: ApiConfig;
 }

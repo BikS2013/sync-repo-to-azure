@@ -1014,3 +1014,337 @@
 | Watch mode | Monitor and sync file changes |
 | Progress events | JSON progress events for large file transfers |
 | Shell completion | Bash/Zsh auto-completion for commands |
+
+---
+
+## 11. REST API
+
+### F11.1 API Server Startup (P0)
+
+**Description**: Start an Express 5.x HTTP server exposing all azure-fs operations as REST endpoints.
+
+**Inputs**:
+- Resolved configuration with `api` section (port, host, corsOrigins, swaggerEnabled, uploadMaxSizeMb, requestTimeoutMs)
+- All existing Azure Storage configuration (storage, auth, logging, retry)
+
+**Outputs**:
+- HTTP server listening on `api.host:api.port`
+- Structured JSON log message indicating successful startup
+
+**Behavior**:
+- Load and validate full configuration including `api` section (all six API parameters are required; no defaults)
+- Create `BlobFileSystemService` and `MetadataService` instances (shared across all requests)
+- Mount middleware: CORS, JSON body parser, request logger, timeout enforcement
+- Mount all route groups under `/api/v1/`
+- Mount health check routes at `/api/health`
+- Conditionally mount Swagger UI at `/api/docs` when `api.swaggerEnabled` is true
+- Mount centralized error handler middleware last
+- Implement graceful shutdown on SIGTERM/SIGINT (stop accepting connections, wait for in-flight requests with 10s timeout)
+- Detect port-in-use (`EADDRINUSE`) and exit with clear error message
+
+**Edge cases**:
+- Missing `api` section in config -- `ConfigError` listing all six required API parameters
+- Port already in use -- exit with `EADDRINUSE` error and exit code 1
+- Azure Storage unreachable at startup -- server starts but health/ready returns unhealthy
+
+---
+
+### F11.2 API Configuration (P0)
+
+**Description**: Extend the existing layered configuration system with API-specific settings.
+
+**Inputs**:
+- Config file `.azure-fs.json` with optional `api` section
+- Environment variables: `AZURE_FS_API_PORT`, `AZURE_FS_API_HOST`, `AZURE_FS_API_CORS_ORIGINS`, `AZURE_FS_API_SWAGGER_ENABLED`, `AZURE_FS_API_UPLOAD_MAX_SIZE_MB`, `AZURE_FS_API_REQUEST_TIMEOUT_MS`
+
+**Outputs**:
+- `ApiResolvedConfig` extending `ResolvedConfig` with required `api: ApiConfig`
+
+**Behavior**:
+- Same priority: CLI Flags > Environment Variables > Config File
+- `AZURE_FS_API_CORS_ORIGINS` parsed as comma-separated string into `string[]`
+- All six API parameters are required when running the API server; throw `ConfigError` if any is missing
+- CLI commands continue to work without any `api` section present
+
+**Edge cases**:
+- `corsOrigins` empty string -- throw `ConfigError` (at least one origin required)
+- `port` is not a valid integer or out of range -- throw `ConfigError`
+- `uploadMaxSizeMb` is zero or negative -- throw `ConfigError`
+
+---
+
+### F11.3 Health Check Endpoints (P0)
+
+**Description**: Provide liveness and readiness health check endpoints.
+
+**Endpoints**:
+- `GET /api/health` -- Liveness probe (always returns 200 if server is running)
+- `GET /api/health/ready` -- Readiness probe (verifies Azure Storage connectivity)
+
+**Outputs**:
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-02-23T10:00:00Z",
+  "uptime": 3600,
+  "checks": {
+    "azureStorage": "connected"
+  }
+}
+```
+
+**Edge cases**:
+- Azure Storage unreachable -- readiness returns `{ status: "degraded", checks: { azureStorage: "disconnected" } }` with HTTP 503
+- Liveness always returns 200 regardless of downstream connectivity
+
+---
+
+### F11.4 File Operations via REST (P0)
+
+**Description**: Expose all file CRUD operations as HTTP endpoints.
+
+**Endpoints**:
+
+| Method | Path | Maps To | Description |
+|--------|------|---------|-------------|
+| `POST` | `/api/v1/files` | `uploadFile()` | Upload new file (multipart: `file` + `remotePath` + optional `metadata` JSON) |
+| `GET` | `/api/v1/files/:path` | `downloadFile()` | Download file content with correct Content-Type |
+| `DELETE` | `/api/v1/files/:path` | `deleteFile()` | Delete file (optional `If-Match`) |
+| `PUT` | `/api/v1/files/:path` | `replaceFile()` | Replace file (multipart; **requires `If-Match`**) |
+| `GET` | `/api/v1/files/:path/info` | `getFileInfo()` | Get file properties, metadata, tags |
+| `HEAD` | `/api/v1/files/:path` | `fileExists()` | Check existence (200 or 404) |
+
+**Behavior**:
+- Upload: Accept multipart form data via multer (memory storage). Field `file` for the binary, `remotePath` for destination, optional `metadata` as JSON string. Size limited by `api.uploadMaxSizeMb`.
+- Download: Return raw file content with `Content-Type`, `Content-Length`, and `ETag` headers
+- Replace: Requires `If-Match` header. Returns 428 if missing, 412 if stale.
+- All success responses include `ETag` header
+- Download supports `If-None-Match` header -- returns 304 Not Modified if ETag matches
+
+**Edge cases**:
+- Upload file exceeds size limit -- 413 Payload Too Large
+- Missing `remotePath` in upload form -- 400 Bad Request
+- Blob not found on download/delete/replace -- 404
+- ETag mismatch on replace -- 412 Precondition Failed
+- Missing `If-Match` on replace -- 428 Precondition Required
+
+---
+
+### F11.5 Folder Operations via REST (P0)
+
+**Description**: Expose folder listing, creation, deletion, and existence checks.
+
+**Endpoints**:
+
+| Method | Path | Maps To | Description |
+|--------|------|---------|-------------|
+| `GET` | `/api/v1/folders/:path` | `listFolder()` | List contents (`?recursive=true` for recursive) |
+| `POST` | `/api/v1/folders/:path` | `createFolder()` | Create virtual folder |
+| `DELETE` | `/api/v1/folders/:path` | `deleteFolder()` | Delete folder and all contents |
+| `HEAD` | `/api/v1/folders/:path` | `folderExists()` | Check existence (200 or 404) |
+
+**Edge cases**:
+- Root listing (`/api/v1/folders/`) -- lists top-level items
+- Folder does not exist on delete -- `deletedCount: 0` (not an error)
+- Path normalization: trailing slashes handled transparently
+
+---
+
+### F11.6 Edit Operations via REST (P0)
+
+**Description**: Expose text patching, appending, and the two-phase edit workflow.
+
+**Endpoints**:
+
+| Method | Path | Maps To | Description |
+|--------|------|---------|-------------|
+| `PATCH` | `/api/v1/files/:path/patch` | `patchFile()` | Find-replace patches (**requires `If-Match`**) |
+| `PATCH` | `/api/v1/files/:path/append` | `appendToFile()` | Append/prepend content (**requires `If-Match`**) |
+| `POST` | `/api/v1/files/:path/edit` | `editFile()` | Download for editing (returns ETag) |
+| `PUT` | `/api/v1/files/:path/edit` | `editFileUpload()` | Re-upload edited file (**requires `If-Match`**) |
+
+**Request bodies**:
+
+Patch:
+```json
+{
+  "patches": [
+    { "find": "old", "replace": "new", "isRegex": false },
+    { "find": "v\\d+", "replace": "v2", "isRegex": true, "flags": "g" }
+  ]
+}
+```
+
+Append:
+```json
+{
+  "content": "New line\n",
+  "position": "end"
+}
+```
+
+**Edge cases**:
+- Missing `If-Match` on PATCH/PUT -- 428
+- ETag mismatch -- 412
+- Invalid regex pattern in patch -- 400
+- Empty patches array -- 400
+
+---
+
+### F11.7 Metadata Operations via REST (P1)
+
+**Description**: Expose metadata CRUD operations.
+
+**Endpoints**:
+
+| Method | Path | Maps To | Description |
+|--------|------|---------|-------------|
+| `GET` | `/api/v1/meta/:path` | `getMetadata()` | Get all metadata |
+| `PUT` | `/api/v1/meta/:path` | `setMetadata()` | Set (replace all) metadata |
+| `PATCH` | `/api/v1/meta/:path` | `updateMetadata()` | Merge partial metadata |
+| `DELETE` | `/api/v1/meta/:path` | `deleteMetadata()` | Delete specific keys |
+
+**Edge cases**:
+- Invalid metadata key -- 400 with validation message
+- Metadata size exceeded -- 400
+- Blob does not exist -- 404
+
+---
+
+### F11.8 Tag Operations via REST (P1)
+
+**Description**: Expose tag CRUD and query operations.
+
+**Endpoints**:
+
+| Method | Path | Maps To | Description |
+|--------|------|---------|-------------|
+| `GET` | `/api/v1/tags/:path` | `getTags()` | Get all tags for a blob |
+| `PUT` | `/api/v1/tags/:path` | `setTags()` | Set (replace all) tags |
+| `GET` | `/api/v1/tags` | `queryByTags()` | Query blobs by filter (`?filter=...`) |
+
+**Edge cases**:
+- More than 10 tags -- 400
+- Invalid OData filter expression -- 400 with syntax guidance
+- No matching blobs -- empty results array (not an error)
+
+---
+
+### F11.9 Error Mapping Middleware (P0)
+
+**Description**: Centralized Express error middleware that maps `AzureFsError` subclasses to appropriate HTTP status codes.
+
+**Behavior**:
+- `AzureFsError` instances: use `err.statusCode` or code-to-status mapping table, respond with `err.toJSON()`
+- `MulterError` instances: respond with 400 and upload-specific error message
+- Unknown errors: log full error, respond with 500 and generic message (never expose internal details)
+
+**Response format** (all errors):
+```json
+{
+  "success": false,
+  "error": {
+    "code": "BLOB_NOT_FOUND",
+    "message": "Blob not found at path: docs/missing.txt"
+  },
+  "metadata": {
+    "command": "api:download",
+    "timestamp": "2026-02-23T10:00:00Z",
+    "durationMs": 45
+  }
+}
+```
+
+---
+
+### F11.10 ETag Concurrency Control (P0)
+
+**Description**: Forward Azure ETags as standard HTTP ETag headers for client-side concurrency management.
+
+**Behavior**:
+- All GET and mutation responses include the `ETag` header (value from Azure blob ETag)
+- `PUT` (replace) and `PATCH` (patch/append): **require** `If-Match` header -- return 428 if missing
+- `DELETE`: honor `If-Match` if present, proceed without check if absent
+- `POST` (upload new): `If-Match` not applicable
+- GET supports `If-None-Match` -- return 304 Not Modified if ETag matches
+
+**HTTP Status Codes**:
+
+| Scenario | Status |
+|----------|--------|
+| ETag matches, update succeeds | 200 OK |
+| ETag mismatch (concurrent modification) | 412 Precondition Failed |
+| `If-Match` missing on required endpoint | 428 Precondition Required |
+| `If-None-Match` matches (resource unchanged) | 304 Not Modified |
+
+---
+
+### F11.11 Swagger/OpenAPI Documentation (P1)
+
+**Description**: Interactive API documentation at `/api/docs` using swagger-jsdoc and swagger-ui-express.
+
+**Behavior**:
+- When `api.swaggerEnabled` is `true`: mount Swagger UI at `/api/docs`, serve OpenAPI JSON at `/api/docs.json`
+- When `api.swaggerEnabled` is `false`: both endpoints return 404
+- All routes annotated with `@openapi` JSDoc comments
+- Reusable component schemas defined in `src/api/swagger/schemas.ts`
+
+**Edge cases**:
+- `swaggerEnabled` not set -- `ConfigError` (required parameter)
+
+---
+
+### F11.12 Request Logging & Timeout (P1)
+
+**Description**: Log all HTTP requests and enforce per-request timeouts.
+
+**Request logging**:
+- Log: HTTP method, URL path, status code, response time, content length
+- Do not log: request body content, file content, authorization headers
+
+**Timeout**:
+- Configurable via `api.requestTimeoutMs`
+- Long-running requests are aborted and respond with 408 Request Timeout
+
+---
+
+### F11.13 CORS Configuration (P0)
+
+**Description**: Restrict cross-origin access to explicitly configured origins.
+
+**Behavior**:
+- Use the `cors` npm package with `origin` set to `api.corsOrigins` array
+- Reject requests from non-configured origins
+- Set `credentials: true` for cookie/header auth support
+- Cache preflight responses with `maxAge: 86400` (24 hours)
+
+**Edge cases**:
+- Wildcard `*` in corsOrigins -- allowed but generates a warning log at startup
+- Request from unlisted origin -- 403 from CORS middleware
+
+---
+
+## 11.1 REST API Feature Summary by Priority
+
+### P0 -- Must-Have
+
+| ID | Feature |
+|----|---------|
+| F11.1 | API server startup and graceful shutdown |
+| F11.2 | API configuration (6 required parameters, no defaults) |
+| F11.3 | Health check endpoints (liveness + readiness) |
+| F11.4 | File operations via REST (upload, download, delete, replace, info, exists) |
+| F11.5 | Folder operations via REST (list, create, delete, exists) |
+| F11.6 | Edit operations via REST (patch, append, edit workflow) |
+| F11.9 | Error mapping middleware |
+| F11.10 | ETag concurrency control |
+| F11.13 | CORS configuration |
+
+### P1 -- Important
+
+| ID | Feature |
+|----|---------|
+| F11.7 | Metadata operations via REST |
+| F11.8 | Tag operations via REST |
+| F11.11 | Swagger/OpenAPI documentation |
+| F11.12 | Request logging and timeout |

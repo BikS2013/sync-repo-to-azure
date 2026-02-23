@@ -1,4 +1,5 @@
 import { AuthMethod, LogLevel, ResolvedConfig, RetryStrategy } from "../types/config.types";
+import { ApiConfig } from "../types/api-config.types";
 import { ConfigError } from "../errors/config.error";
 
 const VALID_AUTH_METHODS: AuthMethod[] = ["connection-string", "sas-token", "azure-ad"];
@@ -219,4 +220,144 @@ export function validateConfig(merged: Record<string, unknown>): ResolvedConfig 
   }
 
   return resolvedConfig;
+}
+
+/**
+ * Validates that all required API configuration fields are present and valid.
+ * Throws ConfigError for any missing or invalid field (no defaults, no fallbacks).
+ *
+ * This is called only when starting the API server -- CLI commands never call this.
+ */
+export function validateApiConfig(api: Record<string, unknown>): ApiConfig {
+  // --- port ---
+  if (api["port"] === undefined || api["port"] === null) {
+    throw ConfigError.missingRequired(
+      "api.port",
+      "(not available as CLI flag, use env var or config file)",
+      "export AZURE_FS_API_PORT=3000",
+      '{ "api": { "port": 3000 } }',
+    );
+  }
+
+  const port = Number(api["port"]);
+  if (isNaN(port) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw ConfigError.invalidValue(
+      "api.port",
+      api["port"],
+      ["integer between 1 and 65535"],
+    );
+  }
+
+  // --- host ---
+  if (!api["host"] || (typeof api["host"] === "string" && api["host"].trim() === "")) {
+    throw ConfigError.missingRequired(
+      "api.host",
+      "(not available as CLI flag, use env var or config file)",
+      "export AZURE_FS_API_HOST=0.0.0.0",
+      '{ "api": { "host": "0.0.0.0" } }',
+    );
+  }
+
+  const host = String(api["host"]).trim();
+
+  // --- corsOrigins ---
+  if (api["corsOrigins"] === undefined || api["corsOrigins"] === null) {
+    throw ConfigError.missingRequired(
+      "api.corsOrigins",
+      "(not available as CLI flag, use env var or config file)",
+      "export AZURE_FS_API_CORS_ORIGINS=http://localhost:3000",
+      '{ "api": { "corsOrigins": ["http://localhost:3000"] } }',
+    );
+  }
+
+  let corsOrigins: string[];
+  if (typeof api["corsOrigins"] === "string") {
+    corsOrigins = api["corsOrigins"]
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  } else if (Array.isArray(api["corsOrigins"])) {
+    corsOrigins = api["corsOrigins"] as string[];
+  } else {
+    throw ConfigError.invalidValue(
+      "api.corsOrigins",
+      api["corsOrigins"],
+      ["comma-separated string or string array"],
+    );
+  }
+
+  if (corsOrigins.length === 0) {
+    throw ConfigError.invalidValue(
+      "api.corsOrigins",
+      api["corsOrigins"],
+      ["non-empty comma-separated string or non-empty string array"],
+    );
+  }
+
+  // --- swaggerEnabled ---
+  if (api["swaggerEnabled"] === undefined || api["swaggerEnabled"] === null) {
+    throw ConfigError.missingRequired(
+      "api.swaggerEnabled",
+      "(not available as CLI flag, use env var or config file)",
+      "export AZURE_FS_API_SWAGGER_ENABLED=true",
+      '{ "api": { "swaggerEnabled": true } }',
+    );
+  }
+
+  if (typeof api["swaggerEnabled"] !== "boolean") {
+    throw ConfigError.invalidValue(
+      "api.swaggerEnabled",
+      api["swaggerEnabled"],
+      ["true", "false"],
+    );
+  }
+
+  const swaggerEnabled = api["swaggerEnabled"] as boolean;
+
+  // --- uploadMaxSizeMb ---
+  if (api["uploadMaxSizeMb"] === undefined || api["uploadMaxSizeMb"] === null) {
+    throw ConfigError.missingRequired(
+      "api.uploadMaxSizeMb",
+      "(not available as CLI flag, use env var or config file)",
+      "export AZURE_FS_API_UPLOAD_MAX_SIZE_MB=100",
+      '{ "api": { "uploadMaxSizeMb": 100 } }',
+    );
+  }
+
+  const uploadMaxSizeMb = Number(api["uploadMaxSizeMb"]);
+  if (isNaN(uploadMaxSizeMb) || uploadMaxSizeMb <= 0) {
+    throw ConfigError.invalidValue(
+      "api.uploadMaxSizeMb",
+      api["uploadMaxSizeMb"],
+      ["positive number (e.g., 50, 100, 256)"],
+    );
+  }
+
+  // --- requestTimeoutMs ---
+  if (api["requestTimeoutMs"] === undefined || api["requestTimeoutMs"] === null) {
+    throw ConfigError.missingRequired(
+      "api.requestTimeoutMs",
+      "(not available as CLI flag, use env var or config file)",
+      "export AZURE_FS_API_REQUEST_TIMEOUT_MS=30000",
+      '{ "api": { "requestTimeoutMs": 30000 } }',
+    );
+  }
+
+  const requestTimeoutMs = Number(api["requestTimeoutMs"]);
+  if (isNaN(requestTimeoutMs) || !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1000) {
+    throw ConfigError.invalidValue(
+      "api.requestTimeoutMs",
+      api["requestTimeoutMs"],
+      ["positive integer >= 1000 (e.g., 5000, 30000, 60000)"],
+    );
+  }
+
+  return {
+    port,
+    host,
+    corsOrigins,
+    swaggerEnabled,
+    uploadMaxSizeMb,
+    requestTimeoutMs,
+  };
 }

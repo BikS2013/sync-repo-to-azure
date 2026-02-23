@@ -2,8 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { AzureFsConfigFile, CliOptions, ResolvedConfig } from "../types/config.types";
+import { ApiResolvedConfig } from "../types/api-config.types";
 import { ConfigError } from "../errors/config.error";
-import { validateConfig } from "./config.schema";
+import { validateConfig, validateApiConfig } from "./config.schema";
 
 /**
  * Load the configuration file from disk.
@@ -63,6 +64,7 @@ function loadEnvConfig(): Record<string, Record<string, unknown>> {
     logging: {},
     retry: {},
     batch: {},
+    api: {},
   };
 
   if (process.env.AZURE_STORAGE_ACCOUNT_URL) {
@@ -99,6 +101,29 @@ function loadEnvConfig(): Record<string, Record<string, unknown>> {
     env["batch"]["concurrency"] = Number(process.env.AZURE_FS_BATCH_CONCURRENCY);
   }
 
+  // --- API-specific environment variables ---
+  if (process.env.AZURE_FS_API_PORT) {
+    env["api"]["port"] = Number(process.env.AZURE_FS_API_PORT);
+  }
+  if (process.env.AZURE_FS_API_HOST) {
+    env["api"]["host"] = process.env.AZURE_FS_API_HOST;
+  }
+  if (process.env.AZURE_FS_API_CORS_ORIGINS) {
+    env["api"]["corsOrigins"] = process.env.AZURE_FS_API_CORS_ORIGINS
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+  if (process.env.AZURE_FS_API_SWAGGER_ENABLED !== undefined && process.env.AZURE_FS_API_SWAGGER_ENABLED !== "") {
+    env["api"]["swaggerEnabled"] = process.env.AZURE_FS_API_SWAGGER_ENABLED === "true";
+  }
+  if (process.env.AZURE_FS_API_UPLOAD_MAX_SIZE_MB) {
+    env["api"]["uploadMaxSizeMb"] = Number(process.env.AZURE_FS_API_UPLOAD_MAX_SIZE_MB);
+  }
+  if (process.env.AZURE_FS_API_REQUEST_TIMEOUT_MS) {
+    env["api"]["requestTimeoutMs"] = Number(process.env.AZURE_FS_API_REQUEST_TIMEOUT_MS);
+  }
+
   return env;
 }
 
@@ -112,6 +137,7 @@ function loadCliConfig(cliOptions: CliOptions): Record<string, Record<string, un
     logging: {},
     retry: {},
     batch: {},
+    api: {},
   };
 
   if (cliOptions.accountUrl) {
@@ -147,71 +173,10 @@ function mergeConfigSection(
 }
 
 /**
- * Load, merge, and validate configuration from all sources.
- * Priority: CLI flags > environment variables > config file.
- *
- * Throws ConfigError if any required field is missing (no fallback/default values).
+ * Build the merged configuration from all sources (file, env, CLI).
+ * Does NOT validate -- returns the raw merged object.
  */
-export function loadConfig(cliOptions: CliOptions): ResolvedConfig {
-  // 1. Load config file (lowest priority)
-  const fileConfig = loadConfigFile(cliOptions.config);
-
-  // 2. Load environment variables (medium priority)
-  const envConfig = loadEnvConfig();
-
-  // 3. Load CLI flags (highest priority)
-  const cliConfig = loadCliConfig(cliOptions);
-
-  // 4. Merge: file < env < CLI
-  const merged: Record<string, unknown> = {
-    storage: mergeConfigSection(
-      (fileConfig.storage as Record<string, unknown>) || {},
-      envConfig["storage"],
-      cliConfig["storage"],
-    ),
-    logging: mergeConfigSection(
-      (fileConfig.logging as Record<string, unknown>) || {},
-      envConfig["logging"],
-      cliConfig["logging"],
-    ),
-    retry: mergeConfigSection(
-      (fileConfig.retry as Record<string, unknown>) || {},
-      envConfig["retry"],
-      cliConfig["retry"],
-    ),
-    batch: mergeConfigSection(
-      (fileConfig.batch as Record<string, unknown>) || {},
-      envConfig["batch"],
-      cliConfig["batch"],
-    ),
-  };
-
-  // 5. Validate -- throws ConfigError for any missing required field
-  return validateConfig(merged);
-}
-
-/**
- * Resolve configuration for a command.
- * This is the primary entry point used by command handlers.
- */
-export function resolveConfig(globalOptions: Record<string, unknown>): ResolvedConfig {
-  const cliOptions: CliOptions = {
-    accountUrl: globalOptions["accountUrl"] as string | undefined,
-    container: globalOptions["container"] as string | undefined,
-    authMethod: globalOptions["authMethod"] as string | undefined,
-    config: globalOptions["config"] as string | undefined,
-    json: globalOptions["json"] as boolean | undefined,
-    verbose: globalOptions["verbose"] as boolean | undefined,
-  };
-
-  return loadConfig(cliOptions);
-}
-
-/**
- * Build a merged config object WITHOUT validation, for display purposes (config show).
- * Returns the raw merged values so the user can see what is resolved from each source.
- */
-export function loadConfigRaw(cliOptions: CliOptions): Record<string, unknown> {
+function buildMergedConfig(cliOptions: CliOptions): Record<string, unknown> {
   const fileConfig = loadConfigFile(cliOptions.config);
   const envConfig = loadEnvConfig();
   const cliConfig = loadCliConfig(cliOptions);
@@ -237,5 +202,73 @@ export function loadConfigRaw(cliOptions: CliOptions): Record<string, unknown> {
       envConfig["batch"],
       cliConfig["batch"],
     ),
+    api: mergeConfigSection(
+      (fileConfig.api as Record<string, unknown>) || {},
+      envConfig["api"],
+      cliConfig["api"],
+    ),
   };
+}
+
+/**
+ * Load, merge, and validate configuration from all sources.
+ * Priority: CLI flags > environment variables > config file.
+ *
+ * Throws ConfigError if any required field is missing (no fallback/default values).
+ * NOTE: The `api` section is NOT validated here -- it is optional for CLI commands.
+ */
+export function loadConfig(cliOptions: CliOptions): ResolvedConfig {
+  const merged = buildMergedConfig(cliOptions);
+
+  // Validate base config (storage, logging, retry, batch) -- throws ConfigError for any missing required field
+  return validateConfig(merged);
+}
+
+/**
+ * Resolve configuration for a command.
+ * This is the primary entry point used by command handlers.
+ */
+export function resolveConfig(globalOptions: Record<string, unknown>): ResolvedConfig {
+  const cliOptions: CliOptions = {
+    accountUrl: globalOptions["accountUrl"] as string | undefined,
+    container: globalOptions["container"] as string | undefined,
+    authMethod: globalOptions["authMethod"] as string | undefined,
+    config: globalOptions["config"] as string | undefined,
+    json: globalOptions["json"] as boolean | undefined,
+    verbose: globalOptions["verbose"] as boolean | undefined,
+  };
+
+  return loadConfig(cliOptions);
+}
+
+/**
+ * Resolve configuration for the API server.
+ * Validates BOTH the base config AND the API section.
+ * All six API parameters are required -- missing values throw ConfigError.
+ *
+ * Returns ApiResolvedConfig with a required `api` section.
+ */
+export function resolveApiConfig(cliOptions?: CliOptions): ApiResolvedConfig {
+  const opts = cliOptions || {};
+  const merged = buildMergedConfig(opts);
+
+  // 1. Validate base config
+  const baseConfig = validateConfig(merged);
+
+  // 2. Validate API-specific config
+  const apiSection = (merged["api"] as Record<string, unknown>) || {};
+  const apiConfig = validateApiConfig(apiSection);
+
+  return {
+    ...baseConfig,
+    api: apiConfig,
+  };
+}
+
+/**
+ * Build a merged config object WITHOUT validation, for display purposes (config show).
+ * Returns the raw merged values so the user can see what is resolved from each source.
+ */
+export function loadConfigRaw(cliOptions: CliOptions): Record<string, unknown> {
+  return buildMergedConfig(cliOptions);
 }

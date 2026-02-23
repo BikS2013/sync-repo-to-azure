@@ -374,3 +374,130 @@ azure-fs patch docs/readme.txt --find "old" --replace "new" --json
 - **Commands**: New command files registered in `commands/index.ts`
 - **Output formatters**: Additional output formats (YAML, table) can be added alongside JSON
 - **Retry strategies**: New strategies added to the retry utility
+
+---
+
+## 9. REST API Layer
+
+The REST API layer exposes all `azure-fs` operations over HTTP using Express 5.x. It is an **additional interface alongside the CLI**, not a replacement. Both entry points share the same service layer. Full technical design is in `docs/design/technical-design-rest-api-layer.md`.
+
+### 9.1 Dual Entry Point Architecture
+
+```
+                              azure-fs
+         ┌──────────────────────┬──────────────────────┐
+         │                      │                      │
+         v                      v                      │
+┌──────────────────┐   ┌──────────────────────┐        │
+│  CLI Entry Point │   │  API Entry Point      │        │
+│  src/index.ts    │   │  src/api/server.ts    │        │
+│  (Commander.js)  │   │  (Express 5)          │        │
+└────────┬─────────┘   └────────┬─────────────┘        │
+         │                      │                      │
+┌────────┴─────────┐   ┌───────┴──────────────┐       │
+│  CLI Commands     │   │  API Controllers     │       │
+│  (parse argv,    │   │  (parse req,         │       │
+│   call services, │   │   call services,     │       │
+│   format output) │   │   format response)   │       │
+└────────┬─────────┘   └───────┬──────────────┘       │
+         │                      │                      │
+         └──────────┬───────────┘                      │
+                    │                                  │
+                    v                                  │
+┌────────────────────────────────────────────────┐     │
+│              Shared Service Layer               │     │
+│                                                │     │
+│  BlobFileSystemService   MetadataService       │     │
+│  AuthService             ConfigLoader          │     │
+│  PathService             RetryUtil / Logger     │     │
+└────────────────────┬───────────────────────────┘     │
+                     │                                 │
+                     v                                 │
+┌────────────────────────────────────────────────┐     │
+│              Azure SDK Layer                    │     │
+│  @azure/storage-blob    @azure/identity        │     │
+└────────────────────────────────────────────────┘     │
+```
+
+### 9.2 API Module Structure
+
+```
+src/api/
+  server.ts                    - Express app factory, HTTP server lifecycle, graceful shutdown
+  routes/
+    index.ts                   - Route registration barrel
+    health.routes.ts           - GET /api/health, GET /api/health/ready
+    file.routes.ts             - File CRUD (POST/GET/DELETE/PUT/HEAD /api/v1/files/*)
+    folder.routes.ts           - Folder operations (GET/POST/DELETE/HEAD /api/v1/folders/*)
+    edit.routes.ts             - Edit/patch/append (PATCH/POST/PUT /api/v1/files/*/patch|append|edit)
+    meta.routes.ts             - Metadata CRUD (GET/PUT/PATCH/DELETE /api/v1/meta/*)
+    tags.routes.ts             - Tag CRUD + query (GET/PUT /api/v1/tags/*, GET /api/v1/tags)
+  controllers/
+    file.controller.ts         - File operation handlers -> BlobFileSystemService
+    folder.controller.ts       - Folder operation handlers -> BlobFileSystemService
+    edit.controller.ts         - Edit operation handlers -> BlobFileSystemService
+    meta.controller.ts         - Metadata handlers -> MetadataService
+    tags.controller.ts         - Tag handlers -> MetadataService
+  middleware/
+    error-handler.middleware.ts - AzureFsError -> HTTP status code mapping
+    request-logger.middleware.ts- Request/response logging (no body content)
+    timeout.middleware.ts       - Per-request timeout enforcement
+    upload.middleware.ts        - Multer memory storage for file uploads
+  swagger/
+    config.ts                  - swagger-jsdoc OpenAPI 3.0 configuration
+    schemas.ts                 - Reusable OpenAPI component schemas
+```
+
+### 9.3 API Request Data Flow
+
+```
+HTTP Request
+    │
+    ├── 1. CORS middleware (validate origin)
+    ├── 2. JSON body parser
+    ├── 3. Request logger (method, URL, timing)
+    ├── 4. Timeout middleware (enforce api.requestTimeoutMs)
+    ├── 5. Route matching -> Controller
+    │       │
+    │       ├── Extract params from req.params / req.query / req.body / req.file
+    │       ├── Call shared service method (plain TypeScript args, never req/res)
+    │       ├── Set ETag response header from service result
+    │       └── Return CommandResult<T> as JSON response
+    │
+    ├── 6. 404 handler (unmatched routes)
+    └── 7. Error handler middleware
+            ├── AzureFsError -> mapped HTTP status + toJSON()
+            ├── MulterError -> 400/413
+            └── Unknown -> 500 (generic message, details hidden)
+```
+
+### 9.4 Service Lifecycle
+
+Services are instantiated **once** at server startup and injected into controllers via closures:
+
+1. `loadApiConfig()` resolves and validates configuration (base + API section)
+2. `new Logger(config.logging.level)` creates a shared logger
+3. `new BlobFileSystemService(config, logger)` creates the file system service (holds `ContainerClient`)
+4. `new MetadataService(config, logger)` creates the metadata service
+5. `createApp(config, blobService, metadataService, logger)` builds the Express app with services injected
+6. `app.listen(config.api.port, config.api.host)` starts the HTTP server
+
+### 9.5 Configuration Extension
+
+The existing config system is extended with an optional `api` section:
+
+- **Config file**: `.azure-fs.json` gains `api: { port, host, corsOrigins, swaggerEnabled, uploadMaxSizeMb, requestTimeoutMs }`
+- **Environment variables**: `AZURE_FS_API_PORT`, `AZURE_FS_API_HOST`, `AZURE_FS_API_CORS_ORIGINS`, `AZURE_FS_API_SWAGGER_ENABLED`, `AZURE_FS_API_UPLOAD_MAX_SIZE_MB`, `AZURE_FS_API_REQUEST_TIMEOUT_MS`
+- **Priority**: CLI Flags > Environment Variables > Config File (unchanged)
+- **Validation**: All six API parameters are required when running in API mode; missing values throw `ConfigError`. CLI commands ignore the `api` section entirely.
+
+### 9.6 Key Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| HTTP Framework | Express 5.x | Built-in async error handling eliminates boilerplate |
+| API Documentation | swagger-jsdoc + swagger-ui-express | Lowest friction, no architectural changes needed |
+| File Upload | Multer memory storage | Service layer already accepts Buffer; size-limited by config |
+| ETag Enforcement | Required on PUT/PATCH; optional on DELETE | Balances data safety with client usability |
+| Error Mapping | Centralized middleware | Single location; leverages existing AzureFsError.toJSON() |
+| Auth Error Sanitization | Generic messages to API clients | Prevents leaking env var names and config paths |

@@ -17,5 +17,13 @@
   },
   "batch": {
     "concurrency": 10
+  },
+  "api": {
+    "port": 3000,
+    "host": "0.0.0.0",
+    "corsOrigins": ["*"],
+    "swaggerEnabled": true,
+    "uploadMaxSizeMb": 100,
+    "requestTimeoutMs": 30000
   }
 }

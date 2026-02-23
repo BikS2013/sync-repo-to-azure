@@ -663,6 +663,81 @@ npm run clean      # Remove dist/
     </info>
 </azure-fs-tags-query>
 
+### REST API
+
+<azure-fs-api>
+    <objective>
+        Start the REST API server for Azure Blob Storage operations
+    </objective>
+    <command>
+        npm run api
+    </command>
+    <info>
+        Starts an Express-based REST API server that exposes Azure Blob Storage
+        operations over HTTP. The API is an alternative to the CLI for programmatic
+        access and integration with web applications or AI agents.
+
+        Start commands:
+          npm run api          Development mode (ts-node)
+          npm run api:start    Production mode (compiled JS, requires npm run build first)
+
+        Endpoints:
+
+          Health:
+            GET    /api/health                  Liveness check (always 200 if process is alive)
+            GET    /api/health/ready            Readiness check (verifies Azure Storage connectivity)
+
+          Files (mounted at /api/v1/files):
+            POST   /api/v1/files               Upload a file (multipart/form-data)
+            GET    /api/v1/files/:path          Download a file
+            HEAD   /api/v1/files/:path          Check if a file exists
+            PUT    /api/v1/files/:path          Replace file content (multipart/form-data)
+            DELETE /api/v1/files/:path          Delete a file
+            GET    /api/v1/files/:path/info     Get file properties and metadata
+
+          Edit (mounted at /api/v1/files):
+            PATCH  /api/v1/files/:path/patch    Find-and-replace in file content
+            PATCH  /api/v1/files/:path/append   Append or prepend content to a file
+            POST   /api/v1/files/:path/edit     Download file for editing (returns ETag)
+            PUT    /api/v1/files/:path/edit     Re-upload edited file (ETag concurrency check)
+
+          Folders (mounted at /api/v1/folders):
+            GET    /api/v1/folders/:path        List folder contents
+            POST   /api/v1/folders/:path        Create a virtual folder
+            DELETE /api/v1/folders/:path        Delete folder and contents recursively
+            HEAD   /api/v1/folders/:path        Check if a folder exists
+
+          Metadata (mounted at /api/v1/meta):
+            GET    /api/v1/meta/:path           Get all metadata for a blob
+            PUT    /api/v1/meta/:path           Set (replace all) metadata
+            PATCH  /api/v1/meta/:path           Merge/update metadata
+            DELETE /api/v1/meta/:path           Delete specific metadata keys
+
+          Tags (mounted at /api/v1/tags):
+            GET    /api/v1/tags                 Query blobs by tag filter (?filter=...)
+            GET    /api/v1/tags/:path           Get all tags for a blob
+            PUT    /api/v1/tags/:path           Set (replace all) tags
+
+        Configuration:
+          All 6 AZURE_FS_API_* environment variables must be set (see Environment
+          Variables section). Alternatively, configure via the "api" section in
+          .azure-fs.json.
+
+        Health check:
+          GET http://localhost:3000/api/health
+
+        Swagger docs (when enabled):
+          http://localhost:3000/api/docs
+          http://localhost:3000/api/docs.json
+
+        Examples:
+          npm run api                         # Start in development mode
+          npm run build && npm run api:start  # Start in production mode
+          curl http://localhost:3000/api/health
+          curl http://localhost:3000/api/v1/files/documents/readme.md
+    </info>
+</azure-fs-api>
+
 ## Global CLI Options
 
 | Flag | Short | Description |
@@ -695,6 +770,12 @@ CLI Flags > Environment Variables > Config File (.azure-fs.json)
 | `AZURE_FS_RETRY_INITIAL_DELAY_MS` | Initial retry delay in ms |
 | `AZURE_FS_RETRY_MAX_DELAY_MS` | Maximum retry delay in ms |
 | `AZURE_FS_BATCH_CONCURRENCY` | Max parallel uploads for batch operations (upload-dir) |
+| `AZURE_FS_API_PORT` | REST API server port (e.g., 3000) |
+| `AZURE_FS_API_HOST` | REST API server bind host (e.g., 0.0.0.0) |
+| `AZURE_FS_API_CORS_ORIGINS` | Comma-separated allowed CORS origins (e.g., * or specific URLs) |
+| `AZURE_FS_API_SWAGGER_ENABLED` | Enable Swagger UI at /api/docs: true/false |
+| `AZURE_FS_API_UPLOAD_MAX_SIZE_MB` | Maximum upload file size in MB for API uploads |
+| `AZURE_FS_API_REQUEST_TIMEOUT_MS` | Request timeout in milliseconds for API requests |
 
 ## Authentication Methods
 
@@ -707,6 +788,29 @@ CLI Flags > Environment Variables > Config File (.azure-fs.json)
 ```
 src/
   index.ts                          - CLI entry point
+  api/
+    server.ts                       - Express app factory and HTTP server startup
+    swagger/
+      config.ts                     - OpenAPI 3.0 spec generation (swagger-jsdoc)
+    routes/
+      index.ts                      - Route registration barrel
+      health.routes.ts              - GET /api/health, GET /api/health/ready
+      file.routes.ts                - /api/v1/files CRUD endpoints
+      folder.routes.ts              - /api/v1/folders CRUD endpoints
+      edit.routes.ts                - /api/v1/files/:path/patch|append|edit
+      meta.routes.ts                - /api/v1/meta CRUD endpoints
+      tags.routes.ts                - /api/v1/tags CRUD + query endpoints
+    controllers/
+      file.controller.ts            - File operation request handlers
+      folder.controller.ts          - Folder operation request handlers
+      edit.controller.ts            - Edit operation request handlers
+      meta.controller.ts            - Metadata operation request handlers
+      tags.controller.ts            - Tags operation request handlers
+    middleware/
+      error-handler.middleware.ts    - Global error handling middleware
+      request-logger.middleware.ts   - HTTP request logging
+      timeout.middleware.ts          - Request timeout enforcement
+      upload.middleware.ts           - Multer file upload handling
   commands/
     index.ts                        - Command registration barrel
     config.commands.ts              - config init | show | validate
