@@ -1,0 +1,376 @@
+# Azure Blob Storage File System CLI Tool - Project Design
+
+**Project Name**: azure-fs
+**Date**: 2026-02-22
+**Version**: 1.0.0
+
+---
+
+## 1. Overview
+
+`azure-fs` is a TypeScript CLI tool that presents Azure Blob Storage as a virtual file system. It is designed to be consumed by AI agents (specifically Claude Code) and human developers alike. The tool supports full CRUD operations on files and folders, three file-editing strategies, metadata management, and blob index tag querying -- all with structured JSON output.
+
+### 1.1 Goals
+
+- Provide a file-system-like interface over Azure Blob Storage flat namespace
+- Support multiple authentication methods (Azure AD, SAS Token, Connection String)
+- Output structured JSON for reliable agent parsing
+- Enforce strict configuration with no silent fallbacks
+- Be modular, testable, and extensible
+
+### 1.2 Non-Goals
+
+- Page blobs and append blobs (block blobs only)
+- Azure Data Lake Storage Gen2 ACLs or POSIX permissions
+- Blob versioning and soft-delete management
+- Multi-cloud abstraction
+- GUI or web interface
+
+---
+
+## 2. High-Level Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        CLI Layer (Commander.js)                   │
+│                                                                  │
+│  azure-fs <command> [args] [--json] [--verbose] [--config path]  │
+│                                                                  │
+│  Commands: config | ls | mkdir | rmdir | exists | upload |       │
+│            download | delete | replace | info | edit | patch |   │
+│            append | meta | tags                                  │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             │ resolves config, creates service
+                             v
+┌──────────────────────────────────────────────────────────────────┐
+│                     Service Layer                                 │
+│                                                                  │
+│  ┌────────────────┐  ┌──────────────────┐  ┌─────────────────┐  │
+│  │ ConfigService   │  │ AuthService       │  │ PathService      │  │
+│  │                │  │                  │  │                 │  │
+│  │ Load & validate│  │ Create clients   │  │ Normalize &     │  │
+│  │ config from    │  │ per auth method  │  │ validate paths  │  │
+│  │ CLI/env/file   │  │ (3 methods)      │  │                 │  │
+│  └────────┬───────┘  └────────┬─────────┘  └────────┬────────┘  │
+│           │                   │                      │           │
+│           v                   v                      v           │
+│  ┌───────────────────────────────────────────────────────────┐   │
+│  │              BlobFileSystemService                         │   │
+│  │                                                           │   │
+│  │  File Ops:    uploadFile, downloadFile, deleteFile,       │   │
+│  │               replaceFile, fileExists, getFileInfo        │   │
+│  │                                                           │   │
+│  │  Folder Ops:  createFolder, listFolder, deleteFolder,     │   │
+│  │               folderExists                                │   │
+│  │                                                           │   │
+│  │  Edit Ops:    editFile, patchFile, appendToFile           │   │
+│  │                                                           │   │
+│  │  Metadata:    set/get/update/deleteMetadata               │   │
+│  │               set/get Tags, queryByTags                   │   │
+│  └─────────────────────────┬─────────────────────────────────┘   │
+│                            │                                     │
+│  ┌─────────────────────────┼─────────────────────────────────┐   │
+│  │  Cross-Cutting Concerns │                                 │   │
+│  │                         │                                 │   │
+│  │  RetryUtil    Logger    OutputFormatter    Validators      │   │
+│  └─────────────────────────┼─────────────────────────────────┘   │
+└────────────────────────────┼─────────────────────────────────────┘
+                             │
+                             v
+┌──────────────────────────────────────────────────────────────────┐
+│                   Azure SDK Layer                                 │
+│                                                                  │
+│  @azure/storage-blob      @azure/identity                        │
+│                                                                  │
+│  BlobServiceClient        DefaultAzureCredential                 │
+│  ContainerClient          (+ SAS Token, Connection String)       │
+│  BlockBlobClient                                                 │
+│  BlobClient                                                      │
+└──────────────────────────────────────────────────────────────────┘
+                             │
+                             v
+                   Azure Blob Storage
+```
+
+---
+
+## 3. Module Relationships
+
+### 3.1 Dependency Graph
+
+```
+src/index.ts
+  └── src/commands/*.ts
+        ├── src/config/config.loader.ts
+        │     └── src/config/config.schema.ts
+        │           └── src/types/config.types.ts
+        ├── src/services/auth.service.ts
+        │     ├── src/types/config.types.ts
+        │     └── src/errors/auth.error.ts
+        ├── src/services/blob-filesystem.service.ts
+        │     ├── src/services/auth.service.ts
+        │     ├── src/services/path.service.ts
+        │     │     └── src/errors/path.error.ts
+        │     ├── src/utils/stream.utils.ts
+        │     ├── src/utils/content-type.utils.ts
+        │     ├── src/utils/retry.utils.ts
+        │     └── src/errors/blob-not-found.error.ts
+        ├── src/services/metadata.service.ts
+        │     ├── src/services/auth.service.ts
+        │     ├── src/services/path.service.ts
+        │     ├── src/utils/validation.utils.ts
+        │     │     └── src/errors/metadata.error.ts
+        │     ├── src/utils/retry.utils.ts
+        │     └── src/errors/blob-not-found.error.ts
+        │     ├── src/utils/retry.utils.ts
+        │     ├── src/utils/logger.utils.ts
+        │     ├── src/utils/validation.utils.ts
+        │     ├── src/types/filesystem.types.ts
+        │     ├── src/types/patch.types.ts
+        │     └── src/errors/blob-not-found.error.ts
+        └── src/utils/output.utils.ts
+              └── src/types/command-result.types.ts
+```
+
+### 3.2 Module Responsibilities
+
+| Module | Responsibility | Key Exports |
+|--------|---------------|-------------|
+| `config.loader` | Load config from CLI flags, env vars, config file; merge; validate | `loadConfig()`, `resolveConfig()` |
+| `config.schema` | Config interfaces and Zod-like validation schemas | `AzureFsConfigFile`, `ResolvedConfig` |
+| `auth.service` | Create Azure SDK clients for each auth method | `createBlobServiceClient()`, `createContainerClient()`, `validateConnection()` |
+| `blob-filesystem.service` | All file system operations against Azure Blob Storage | `BlobFileSystemService` class |
+| `path.service` | Path normalization, validation, folder/file distinction | `normalizePath()`, `normalizeFolderPath()`, `validateBlobPath()` |
+| `metadata.service` | Metadata and tag operations with validation | `MetadataService` class |
+| `output.utils` | Format CommandResult as JSON or human-readable text | `formatOutput()` |
+| `retry.utils` | Configurable retry wrapper (none/exponential/fixed) | `withRetry()` |
+| `logger.utils` | Request logging (parameters only, no file content) | `Logger` class |
+| `stream.utils` | Convert Node.js streams to strings/buffers | `streamToString()`, `streamToBuffer()` |
+| `content-type.utils` | Map file extensions to MIME types | `detectContentType()` |
+| `validation.utils` | Validate metadata keys, sizes, blob names, tag counts | `validateMetadataKey()`, `estimateMetadataSize()`, `validateBlobName()` |
+| `concurrency.utils` | Promise-based parallel execution limiter (no deps) | `parallelLimit()` |
+
+---
+
+## 4. Data Flow Diagrams
+
+### 4.1 Command Execution Flow
+
+```
+User/Agent invokes: azure-fs upload ./local.txt docs/readme.txt --json
+
+    ┌───────────┐
+    │ Commander  │  Parse args: command=upload, local=./local.txt,
+    │  Parser    │  remote=docs/readme.txt, json=true
+    └─────┬─────┘
+          │
+          v
+    ┌───────────┐
+    │  Config    │  1. Load CLI flags (--account-url, --container, etc.)
+    │  Loader    │  2. Load env vars (AZURE_STORAGE_*)
+    └─────┬─────┘  3. Load .azure-fs.json
+          │        4. Merge (CLI > env > file)
+          │        5. Validate (throw if missing)
+          v
+    ┌───────────┐
+    │   Auth     │  Create BlobServiceClient using configured authMethod
+    │  Service   │  -> ContainerClient for the configured container
+    └─────┬─────┘
+          │
+          v
+    ┌───────────┐
+    │  Path      │  Normalize: "docs/readme.txt"
+    │  Service   │  (strip leading slash, collapse //, resolve ..)
+    └─────┬─────┘
+          │
+          v
+    ┌───────────┐
+    │  BlobFS    │  1. Detect content type from extension (.txt -> text/plain)
+    │  Service   │  2. Read local file (stream if > 100MB)
+    └─────┬─────┘  3. Upload to Azure (with retry)
+          │        4. Return UploadResult { path, size, etag, contentType }
+          v
+    ┌───────────┐
+    │  Output    │  Format as CommandResult JSON:
+    │  Formatter │  { success: true, data: UploadResult, metadata: { ... } }
+    └─────┬─────┘
+          │
+          v
+    stdout (JSON)
+```
+
+### 4.2 Edit (Patch) Flow
+
+```
+azure-fs patch docs/readme.txt --find "old" --replace "new" --json
+
+    ┌───────────┐
+    │  Config +  │  (same as above)
+    │  Auth      │
+    └─────┬─────┘
+          │
+          v
+    ┌───────────────────────────────────────────┐
+    │  BlobFileSystemService.patchFile()         │
+    │                                           │
+    │  1. Download blob content as string       │
+    │     (store ETag from response)            │
+    │                                           │
+    │  2. Apply PatchInstruction:               │
+    │     content.replaceAll("old", "new")      │
+    │     -> count matches                      │
+    │                                           │
+    │  3. Upload modified content               │
+    │     conditions: { ifMatch: storedETag }   │
+    │     (fails with 412 if modified           │
+    │      by another process)                  │
+    │                                           │
+    │  4. Return PatchResult with details       │
+    └─────┬─────────────────────────────────────┘
+          │
+          v
+    { success: true, data: { patchesApplied: 1, matchesFound: 3, ... } }
+```
+
+### 4.3 Configuration Resolution Flow
+
+```
+    ┌──────────────────────────────────────────────────┐
+    │                Resolution Order                    │
+    │                                                  │
+    │  Step 1: CLI Flags                               │
+    │    --account-url, --container, --auth-method     │
+    │                 │                                │
+    │                 v                                │
+    │  Step 2: Environment Variables                   │
+    │    AZURE_STORAGE_ACCOUNT_URL                     │
+    │    AZURE_STORAGE_CONTAINER_NAME                  │
+    │    AZURE_FS_AUTH_METHOD                           │
+    │                 │                                │
+    │                 v                                │
+    │  Step 3: Config File (.azure-fs.json)            │
+    │    Search: --config path > CWD > HOME            │
+    │                 │                                │
+    │                 v                                │
+    │  Step 4: Validation                              │
+    │    Missing required -> throw ConfigError         │
+    │    Invalid values  -> throw ConfigError          │
+    │    All present     -> return ResolvedConfig      │
+    └──────────────────────────────────────────────────┘
+```
+
+### 4.4 Authentication Flow
+
+```
+    ResolvedConfig.storage.authMethod
+          │
+          ├── "azure-ad"
+          │     └── new DefaultAzureCredential()
+          │         Discovers credentials from:
+          │         1. Environment vars (AZURE_TENANT_ID, etc.)
+          │         2. Managed Identity
+          │         3. Azure CLI (az login)
+          │         4. Visual Studio Code
+          │
+          ├── "sas-token"
+          │     └── Read AZURE_STORAGE_SAS_TOKEN env var
+          │         (throw AuthError if missing)
+          │         -> BlobServiceClient(url + sasToken)
+          │
+          └── "connection-string"
+                └── Read AZURE_STORAGE_CONNECTION_STRING env var
+                    (throw AuthError if missing)
+                    -> BlobServiceClient.fromConnectionString()
+```
+
+---
+
+## 5. Technology Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Language | TypeScript 5+ | Type safety, IDE support, project requirement |
+| Runtime | Node.js 18+ | LTS, required for Azure SDK features (uploadFile, downloadToFile) |
+| CLI Framework | Commander.js 12+ | Lightweight, TypeScript-first, mature ecosystem (research recommendation) |
+| Azure SDK | @azure/storage-blob 12.31+ | Official Microsoft SDK, comprehensive TypeScript types |
+| Auth SDK | @azure/identity 4+ | DefaultAzureCredential support for passwordless auth |
+| Env loading | dotenv 16+ | Load .env files for local development |
+| Module system | CommonJS | Best compatibility with Commander.js and Azure SDK |
+| Build tool | tsc (TypeScript compiler) | Simple, no bundler needed for CLI tool |
+| Blob type | Block blobs only | Most common, sufficient for file system use case |
+| Folder strategy | Zero-byte marker blobs | Explicit folders, metadata support, ADLS Gen2 compatible (research recommendation) |
+| Output format | JSON (default) | Agent-consumable, consistent structure |
+| Config format | JSON (.azure-fs.json) | Simple, human-editable, no additional parser needed |
+| Error handling | Custom error classes | Structured error codes for agent parsing |
+| Retry strategy | Configurable (none/exponential/fixed) | User-controlled recovery per research clarifications |
+| Logging | Custom logger (request params, no content) | Per research clarification: log everything except file content |
+
+---
+
+## 6. Key Architectural Decisions
+
+### 6.1 No Fallback/Default Values for Configuration
+
+**Decision**: Every required configuration parameter must be explicitly provided. Missing values throw `ConfigError` with detailed instructions on how to provide the value.
+
+**Rationale**: Per project conventions. Prevents silent misconfiguration where a default value causes the tool to connect to the wrong resource.
+
+### 6.2 Service Layer Abstraction
+
+**Decision**: All Azure SDK operations are wrapped in `BlobFileSystemService`, never called directly from command handlers.
+
+**Rationale**:
+- Commands stay thin (parse args, call service, format output)
+- Service layer is testable independently
+- Service layer can be used as a library by other tools
+- Retry logic and logging are applied consistently at the service level
+
+### 6.3 ETag-Based Concurrency Control for Edit Operations
+
+**Decision**: All edit operations (edit, patch, append) use ETag-based conditional writes to prevent data loss from concurrent modifications.
+
+**Rationale**: Per research findings, blobs are immutable. The read-modify-write pattern is inherently vulnerable to race conditions. ETag checks (HTTP `If-Match` header) detect when the blob has been modified between read and write.
+
+### 6.4 Structured JSON Output for Every Command
+
+**Decision**: Every command returns `CommandResult<T>` with `success`, `data`, `error`, and `metadata` fields.
+
+**Rationale**: AI agents need consistent, parseable output. The `success` boolean allows quick pass/fail checking. The `error.code` field allows agents to handle specific error types programmatically.
+
+### 6.5 Three Authentication Methods
+
+**Decision**: Support azure-ad (recommended), sas-token, and connection-string. Selection is explicit via `authMethod` config parameter.
+
+**Rationale**: Different environments need different auth methods. Azure AD for development/production, SAS for temporary access, connection string for quick prototyping. Explicit selection prevents ambiguity (per research recommendation against implicit fallback chains).
+
+---
+
+## 7. Security Considerations
+
+1. **No secrets in config files**: Connection strings and SAS tokens must come from environment variables, never from `.azure-fs.json`
+2. **Azure AD as primary auth**: DefaultAzureCredential provides the strongest security model
+3. **Request logging omits content**: Logger records request parameters but never file content or credentials
+4. **Config file in .gitignore**: The `.azure-fs.json` file should be gitignored; only `.azure-fs.json.example` is committed
+5. **Process exit on error**: Failed operations exit with non-zero codes to prevent agents from continuing with stale state
+
+---
+
+## 8. Scalability and Extensibility
+
+### Future Extensions (not in scope for v1.0)
+
+1. **Batch operations**: Upload/download multiple files in parallel
+2. **Container management**: Create/delete containers
+3. **Recursive upload/download**: Mirror local directory to/from blob storage
+4. **Watch mode**: Monitor local directory and sync changes
+5. **Plugin system**: Allow custom commands via plugins
+6. **Multiple container support**: Operations across containers in one command
+
+### Extension Points in Current Design
+
+- **AuthService**: New auth methods can be added by extending the factory pattern
+- **BlobFileSystemService**: New operations added as methods
+- **Commands**: New command files registered in `commands/index.ts`
+- **Output formatters**: Additional output formats (YAML, table) can be added alongside JSON
+- **Retry strategies**: New strategies added to the retry utility

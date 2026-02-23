@@ -1,0 +1,56 @@
+/**
+ * Error code prefixes by error category.
+ */
+
+/** Configuration error codes */
+export enum ConfigErrorCode {
+  MISSING_REQUIRED_CONFIG = "CONFIG_MISSING_REQUIRED",
+  INVALID_CONFIG_VALUE = "CONFIG_INVALID_VALUE",
+  CONFIG_FILE_NOT_FOUND = "CONFIG_FILE_NOT_FOUND",
+  CONFIG_FILE_PARSE_ERROR = "CONFIG_FILE_PARSE_ERROR",
+}
+
+/** Authentication error codes */
+export enum AuthErrorCode {
+  MISSING_CONNECTION_STRING = "AUTH_MISSING_CONNECTION_STRING",
+  MISSING_SAS_TOKEN = "AUTH_MISSING_SAS_TOKEN",
+  AZURE_AD_FAILED = "AUTH_AZURE_AD_FAILED",
+  INVALID_AUTH_METHOD = "AUTH_INVALID_AUTH_METHOD",
+  ACCESS_DENIED = "AUTH_ACCESS_DENIED",
+  CONNECTION_FAILED = "AUTH_CONNECTION_FAILED",
+}
+
+/** Blob operation error codes */
+export enum BlobErrorCode {
+  BLOB_NOT_FOUND = "BLOB_NOT_FOUND",
+  CONTAINER_NOT_FOUND = "BLOB_CONTAINER_NOT_FOUND",
+  CONFLICT = "BLOB_CONFLICT",
+  PRECONDITION_FAILED = "BLOB_PRECONDITION_FAILED",
+}
+
+/** Path error codes */
+export enum PathErrorCode {
+  PATH_TOO_LONG = "PATH_TOO_LONG",
+  INVALID_PATH = "PATH_INVALID",
+  EMPTY_PATH = "PATH_EMPTY",
+  LOCAL_FILE_NOT_FOUND = "PATH_LOCAL_FILE_NOT_FOUND",
+}
+
+/** Metadata error codes */
+export enum MetadataErrorCode {
+  INVALID_KEY = "META_INVALID_KEY",
+  SIZE_EXCEEDED = "META_SIZE_EXCEEDED",
+  MAX_TAGS_EXCEEDED = "META_MAX_TAGS_EXCEEDED",
+}
+
+/** Network error codes */
+export enum NetworkErrorCode {
+  CONNECTION_FAILED = "NET_CONNECTION_FAILED",
+  TIMEOUT = "NET_TIMEOUT",
+  TRANSIENT_ERROR = "NET_TRANSIENT_ERROR",
+}
+
+/** General error codes */
+export enum GeneralErrorCode {
+  UNKNOWN_ERROR = "UNKNOWN_ERROR",
+}

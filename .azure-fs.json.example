@@ -1,0 +1,21 @@
+{
+  "storage": {
+    "accountUrl": "https://myaccount.blob.core.windows.net",
+    "containerName": "my-container",
+    "authMethod": "azure-ad",
+    "sasTokenExpiry": "2026-12-31T00:00:00Z"
+  },
+  "logging": {
+    "level": "info",
+    "logRequests": true
+  },
+  "retry": {
+    "strategy": "exponential",
+    "maxRetries": 3,
+    "initialDelayMs": 1000,
+    "maxDelayMs": 30000
+  },
+  "batch": {
+    "concurrency": 10
+  }
+}
