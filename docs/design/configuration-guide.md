@@ -245,6 +245,8 @@ This is sufficient for local usage. No additional environment variables are need
 **Recommended management:**
 Store in the `.azure-fs.json` config file. Use `info` for everyday usage and `debug` when troubleshooting. Note that the `--verbose` / `-v` CLI flag provides per-command debug output independently of this setting.
 
+**Runtime toggle (API mode):** When the API server is running with `NODE_ENV` not set to `production`, the console hotkey `v` toggles `AZURE_FS_LOG_LEVEL` between `debug` and `info` at runtime. This modifies the environment variable in the running process and takes effect for subsequent log operations without a server restart.
+
 ---
 
 ### `logging.logRequests`
@@ -534,12 +536,18 @@ Store in the `.azure-fs.json` config file or `.env` file.
 
 | Value | Description | When to use |
 |-------|-------------|-------------|
-| `development` | Error responses include stack traces. Swagger shows "Development server". Dev routes (`/api/dev/env`) are mounted. | Local development and debugging. |
-| `production` | Stack traces are suppressed in error responses. Swagger shows "Production server". Dev routes are NOT mounted. | Production deployments. |
-| `test` | Same as production (no stack traces, no dev routes). | Automated testing environments. |
+| `development` | Error responses include stack traces. Swagger shows "Development server". Dev routes (`/api/dev/env`) and hotkey routes (`/api/dev/hotkeys/*`) are mounted. Console hotkeys are active. | Local development, debugging, and Docker containers that need remote hotkey access. |
+| `production` | Stack traces are suppressed in error responses. Swagger shows "Production server". Dev routes and hotkey routes are NOT mounted. Console hotkeys are disabled. | Production deployments. |
+| `test` | Same as production (no stack traces, no dev routes, no hotkey routes). | Automated testing environments. |
 
 **Recommended management:**
 Set as an environment variable. Use `development` locally, `production` in deployed environments, and `test` in CI/CD test runners. This follows the standard Node.js convention.
+
+**Console hotkeys note:**
+When `NODE_ENV` is not `production`, the API server activates interactive console hotkeys after startup. These allow clearing the console (`c`), freezing/unfreezing log output (`f`), toggling verbose mode (`v`), inspecting the resolved configuration (`i`), and viewing help (`h`). The verbose toggle changes `AZURE_FS_LOG_LEVEL` at runtime between `debug` and `info`, affecting subsequent log output without requiring a server restart. In `production` mode, the console hotkeys are completely disabled and no stdin listener is created. No additional configuration variables are required for this feature.
+
+**Hotkey API endpoints note:**
+When `NODE_ENV=development`, the same hotkey actions are also available as HTTP endpoints under `/api/dev/hotkeys/*`. This allows remote access to hotkey functionality in Docker containers, cloud deployments, and other environments where stdin is not reachable. The endpoints are: `POST /api/dev/hotkeys/clear`, `POST /api/dev/hotkeys/freeze`, `POST /api/dev/hotkeys/verbose`, `GET /api/dev/hotkeys/config`, `GET /api/dev/hotkeys/status`, and `GET /api/dev/hotkeys/help`.
 
 ---
 
@@ -775,3 +783,66 @@ Use `azure-fs config validate` to verify that:
 4. The target container exists and is accessible.
 
 Use `azure-fs config show` to inspect the merged configuration without validation (sensitive values are masked in the output).
+
+---
+
+## Docker Deployment Configuration
+
+When running the API in a Docker container, all configuration must be provided via environment variables. The config file (`.azure-fs.json`) is excluded from the image by `.dockerignore`.
+
+### Setup
+
+1. Copy the Docker-specific template:
+   ```bash
+   cp .env.docker.example .env
+   ```
+
+2. Fill in the required Azure Storage credentials in `.env`.
+
+3. Start the container:
+   ```bash
+   docker compose up
+   ```
+
+### Docker-Specific Defaults
+
+The following values are pre-set in `.env.docker.example` with production-oriented defaults:
+
+| Variable | Docker Default | Rationale |
+|----------|---------------|-----------|
+| `NODE_ENV` | `development` | Enables dev features, console hotkeys, hotkey API endpoints, stack traces in errors |
+| `AZURE_FS_API_HOST` | `0.0.0.0` | Required for container networking (bind to all interfaces) |
+| `AZURE_FS_API_PORT` | `3000` | Standard API port; mapped to host via Docker port binding |
+| `AUTO_SELECT_PORT` | `false` | Deterministic port assignment in containers |
+| `AZURE_FS_LOG_LEVEL` | `info` | Balanced logging for production |
+| `AZURE_FS_LOG_REQUESTS` | `false` | Reduce log noise in production |
+| `AZURE_FS_RETRY_STRATEGY` | `exponential` | Resilient to transient failures |
+
+### Reverse Proxy / Load Balancer
+
+When the container runs behind a reverse proxy (e.g., NGINX, Azure Application Gateway, Kubernetes Ingress):
+
+- Set `PUBLIC_URL` to the external URL (e.g., `https://api.example.com`) so Swagger docs show the correct server URL.
+- The container still binds to `0.0.0.0:3000` internally; the proxy handles TLS termination and port mapping.
+
+### Docker Compose Override
+
+The `docker-compose.yml` file sets environment variables that override any values from `.env`:
+
+```yaml
+environment:
+  - NODE_ENV=development
+  - AZURE_FS_API_HOST=0.0.0.0
+  - AZURE_FS_API_PORT=3000
+  - AUTO_SELECT_PORT=false
+```
+
+These ensure the container always runs with correct networking settings regardless of what is in `.env`.
+
+### Configuration Priority in Docker
+
+The priority order remains the same as the standard tool, but in practice:
+
+1. **Docker Compose `environment` section** (overrides everything)
+2. **`.env` file** (loaded by Docker Compose `env_file` directive)
+3. Config file is not available (excluded from image)

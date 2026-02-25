@@ -124,6 +124,7 @@ export function createSwaggerSpec(apiConfig: ApiConfig, actualPort?: number): ob
         { name: "Metadata", description: "Blob user-defined metadata operations" },
         { name: "Tags", description: "Blob index tag operations and queries" },
         { name: "Development", description: "Development-only diagnostic endpoints (only available when NODE_ENV=development)" },
+        { name: "Hotkeys", description: "Remote console hotkey actions (only available when NODE_ENV=development)" },
       ],
     },
     apis: ["./src/api/routes/*.ts", "./dist/api/routes/*.js"],

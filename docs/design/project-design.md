@@ -150,6 +150,7 @@ src/index.ts
 | `content-type.utils` | Map file extensions to MIME types | `detectContentType()` |
 | `validation.utils` | Validate metadata keys, sizes, blob names, tag counts | `validateMetadataKey()`, `estimateMetadataSize()`, `validateBlobName()` |
 | `concurrency.utils` | Promise-based parallel execution limiter (no deps) | `parallelLimit()` |
+| `console-commands.utils` | Interactive console hotkeys for API server development/debugging | `ConsoleCommands` class |
 
 ---
 
@@ -432,12 +433,14 @@ src/api/
     edit.routes.ts             - Edit/patch/append (PATCH/POST/PUT /api/v1/files/*/patch|append|edit)
     meta.routes.ts             - Metadata CRUD (GET/PUT/PATCH/DELETE /api/v1/meta/*)
     tags.routes.ts             - Tag CRUD + query (GET/PUT /api/v1/tags/*, GET /api/v1/tags)
+    hotkeys.routes.ts          - Remote console hotkey actions (POST/GET /api/dev/hotkeys/*)
   controllers/
     file.controller.ts         - File operation handlers -> BlobFileSystemService
     folder.controller.ts       - Folder operation handlers -> BlobFileSystemService
     edit.controller.ts         - Edit operation handlers -> BlobFileSystemService
     meta.controller.ts         - Metadata handlers -> MetadataService
     tags.controller.ts         - Tag handlers -> MetadataService
+    hotkeys.controller.ts      - Remote console hotkey action handlers
   middleware/
     error-handler.middleware.ts - AzureFsError -> HTTP status code mapping
     request-logger.middleware.ts- Request/response logging (no body content)
@@ -479,8 +482,11 @@ Services are instantiated **once** at server startup and injected into controlle
 2. `new Logger(config.logging.level)` creates a shared logger
 3. `new BlobFileSystemService(config, logger)` creates the file system service (holds `ContainerClient`)
 4. `new MetadataService(config, logger)` creates the metadata service
-5. `createApp(config, blobService, metadataService, logger)` builds the Express app with services injected
-6. `app.listen(config.api.port, config.api.host)` starts the HTTP server
+5. If `NODE_ENV !== "production"`: `ConsoleCommands` is instantiated with a config inspector
+6. `createApp(config, blobService, metadataService, logger, actualPort, consoleCommands)` builds the Express app with services injected (including `consoleCommands` for hotkey routes)
+7. `app.listen(config.api.port, config.api.host)` starts the HTTP server
+8. After `server.listen()`: `ConsoleCommands.setup()` is called to start the readline interface
+9. On graceful shutdown: `ConsoleCommands.cleanup()` restores console methods and closes the readline interface
 
 ### 9.5 Configuration Extension
 
@@ -501,3 +507,135 @@ The existing config system is extended with an optional `api` section:
 | ETag Enforcement | Required on PUT/PATCH; optional on DELETE | Balances data safety with client usability |
 | Error Mapping | Centralized middleware | Single location; leverages existing AzureFsError.toJSON() |
 | Auth Error Sanitization | Generic messages to API clients | Prevents leaking env var names and config paths |
+
+### 9.7 Console Hotkeys (ConsoleCommands)
+
+The `ConsoleCommands` class (`src/utils/console-commands.utils.ts`) provides interactive keyboard shortcuts for the API server during development and debugging. It is a standalone utility with one external dependency (`chalk@4` for colored output).
+
+**Activation**: Only enabled when `NODE_ENV !== "production"`. Initialized after `server.listen()` in `src/api/server.ts` and cleaned up during graceful shutdown.
+
+**Hotkeys** (type letter + Enter):
+
+| Key | Action |
+|-----|--------|
+| `c` | Clear console (including scrollback buffer) |
+| `f` | Freeze/unfreeze log output (suppresses `console.log/error/warn` when frozen) |
+| `v` | Toggle verbose mode (sets `AZURE_FS_LOG_LEVEL` between `debug` and `info` at runtime) |
+| `i` | Inspect resolved configuration (sensitive values masked) |
+| `h` | Show help listing all hotkeys |
+| `Ctrl+C` | Graceful exit |
+
+**Config Inspector**: The static factory method `ConsoleCommands.createInspector(config)` builds a `ConfigInspectorFn` from the resolved `ApiResolvedConfig`. It masks sensitive values (`AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_SAS_TOKEN`) and displays all resolved config keys including the runtime verbose state.
+
+**Lifecycle**:
+1. `ConsoleCommands` constructor stores references to original `console.log/error/warn` methods
+2. Instance is created before `createApp()` and injected into `ApiServices` so hotkey routes can use it
+3. `setup()` creates a `readline.Interface` on `process.stdin` and registers the `line` and `SIGINT` handlers (called after `server.listen()`)
+4. `cleanup()` closes the readline interface and restores the original console methods
+
+**API Endpoints** (remote access, mounted at `/api/dev/hotkeys` when `NODE_ENV=development`):
+
+| Endpoint | Method | Action |
+|----------|--------|--------|
+| `/api/dev/hotkeys/clear` | POST | Clear console output |
+| `/api/dev/hotkeys/freeze` | POST | Toggle freeze/unfreeze log output |
+| `/api/dev/hotkeys/verbose` | POST | Toggle verbose mode (debug/info) |
+| `/api/dev/hotkeys/config` | GET | Inspect resolved configuration (masked) |
+| `/api/dev/hotkeys/status` | GET | Get current state (frozen, verbose) |
+| `/api/dev/hotkeys/help` | GET | List available hotkeys and descriptions |
+
+All endpoints return structured JSON with `success`, `data`, and `metadata` fields. Defense-in-depth `NODE_ENV` check returns 403 if not in development. Returns 503 if `ConsoleCommands` is not initialized.
+
+The public methods (`executeClear()`, `executeFreeze()`, `executeVerbose()`, `executeInspect()`, `getStatus()`, `getHelp()`) return structured data objects, allowing both the console hotkeys and API endpoints to share the same logic.
+
+---
+
+## 10. Docker Deployment
+
+### 10.1 Container Architecture
+
+The API is containerized using a multi-stage Docker build for minimal image size and security:
+
+```
+┌──────────────────────────────────────────────────┐
+│              Docker Image (node:20-alpine)         │
+│                                                   │
+│  User: node (non-root)                            │
+│                                                   │
+│  /app/                                            │
+│    package.json                                   │
+│    package-lock.json                              │
+│    node_modules/  (production deps only)          │
+│    dist/          (compiled JS from builder)      │
+│                                                   │
+│  EXPOSE 3000                                      │
+│  HEALTHCHECK: wget /api/health                    │
+│  CMD: node dist/api/server.js                     │
+└──────────────────────────────────────────────────┘
+```
+
+### 10.2 Multi-Stage Build
+
+| Stage | Base Image | Purpose |
+|-------|-----------|---------|
+| `builder` | `node:20-alpine` | Install all deps (including devDeps), compile TypeScript |
+| `production` | `node:20-alpine` | Install production deps only, copy compiled output |
+
+This separation ensures:
+- TypeScript compiler and dev tools are not in the final image
+- Final image contains only `dist/`, `node_modules/` (prod), and `package.json`
+- Image size is minimized (~150-200 MB vs ~400+ MB with dev deps)
+
+### 10.3 Security
+
+- **Non-root execution**: Container runs as the built-in `node` user
+- **No secrets baked in**: All credentials passed via environment variables at runtime
+- **Minimal attack surface**: Alpine-based image with only production dependencies
+- **Health checks**: Built-in Docker HEALTHCHECK for orchestrator integration
+
+### 10.4 Configuration Strategy
+
+All configuration is passed exclusively via environment variables in Docker:
+
+- Config files (`.azure-fs.json`) are excluded via `.dockerignore`
+- `.env` file is loaded by Docker Compose at runtime (not baked into the image)
+- The `docker-compose.yml` sets Docker-specific overrides (`NODE_ENV=development`, `AZURE_FS_API_HOST=0.0.0.0`, `AUTO_SELECT_PORT=false`)
+- `PUBLIC_URL` can be set when the container is behind a reverse proxy
+
+### 10.5 Docker Files
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Multi-stage production image |
+| `.dockerignore` | Excludes unnecessary files from build context |
+| `docker-compose.yml` | Local dev/testing with health checks and restart policy |
+| `.env.docker.example` | Docker-specific env template with production defaults |
+
+### 10.6 Deployment Commands
+
+```bash
+# Build image
+docker build -t azure-fs-api .
+
+# Run standalone
+docker run --env-file .env -p 3000:3000 azure-fs-api
+
+# Docker Compose (recommended)
+docker compose up          # foreground
+docker compose up -d       # detached
+docker compose up --build  # rebuild after code changes
+docker compose down        # stop and remove
+```
+
+### 10.7 Production Readiness Checklist
+
+The codebase is already well-prepared for containerization:
+
+- [x] Binds to `0.0.0.0` (configurable via `AZURE_FS_API_HOST`)
+- [x] Health check endpoints (`/api/health` and `/api/health/ready`)
+- [x] Graceful shutdown on `SIGTERM`/`SIGINT`
+- [x] All configuration via environment variables
+- [x] No file system dependencies for runtime state
+- [x] Container-aware Swagger URL detection (`DOCKER_HOST_URL`, `PUBLIC_URL`)
+- [x] Console hotkeys auto-disabled in production (`NODE_ENV=production`)
+- [x] Hotkey API endpoints for remote access in Docker/cloud environments (`/api/dev/hotkeys/*`)

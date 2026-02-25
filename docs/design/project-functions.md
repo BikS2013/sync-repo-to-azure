@@ -1507,6 +1507,123 @@ Append:
 
 ---
 
+### F12.6 Console Hotkeys (P2)
+
+**Description**: Interactive keyboard shortcuts for the API server console during development and debugging. Provides quick access to common developer actions without restarting the server.
+
+**Inputs**:
+- `NODE_ENV` (feature is only active when `NODE_ENV !== "production"`)
+- Keyboard input via `process.stdin` (letter + Enter)
+- Resolved `ApiResolvedConfig` for config inspection
+
+**Outputs**:
+- Console feedback for each hotkey action (colored via `chalk`)
+- Runtime changes to `AZURE_FS_LOG_LEVEL` environment variable (verbose toggle)
+- Console output suppression (freeze toggle)
+
+**Hotkeys**:
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `c` | Clear console | Clears the terminal including scrollback buffer; re-displays help |
+| `f` | Freeze/unfreeze output | Suppresses all `console.log`, `console.error`, `console.warn` calls when frozen; restores when unfrozen |
+| `v` | Toggle verbose mode | Sets `AZURE_FS_LOG_LEVEL` to `debug` (on) or `info` (off) at runtime |
+| `i` | Inspect configuration | Displays all resolved configuration keys with sensitive values masked |
+| `h` | Show help | Prints the hotkey reference table |
+| `Ctrl+C` | Graceful exit | Triggers cleanup and `process.exit(0)` |
+
+**Behavior**:
+- The `ConsoleCommands` class is instantiated in `src/api/server.ts` after `server.listen()` completes
+- `ConsoleCommands.createInspector(config)` builds a config inspector function that masks `AZURE_STORAGE_CONNECTION_STRING` and `AZURE_STORAGE_SAS_TOKEN`
+- The verbose toggle modifies `process.env.AZURE_FS_LOG_LEVEL` at runtime, which affects subsequent logger operations
+- The freeze toggle replaces `console.log/error/warn` with no-op functions; unfreezing restores the originals
+- On graceful shutdown (SIGTERM/SIGINT), `cleanup()` closes the readline interface and restores console methods
+- Uses `chalk@4` (CommonJS-compatible) for colored terminal output
+
+**Edge cases**:
+- `NODE_ENV=production` -- `ConsoleCommands` is never instantiated; no stdin listener is created
+- stdin not available (e.g., piped input) -- setup catches errors and logs a warning; server continues normally
+- Unrecognized input -- silently ignored (no error, no feedback)
+- Multiple freeze toggles -- idempotent; freeze/unfreeze alternates correctly
+- Verbose toggle when log level was already `debug` -- still toggles to `info` on next press
+
+---
+
+### F12.7 Hotkey API Endpoints (P1)
+
+**Description**: HTTP endpoints that invoke the same console hotkey actions remotely. Provides access to hotkey functionality in Docker containers, cloud deployments, and other environments where stdin is not reachable.
+
+**Endpoints**:
+
+| Method | Path | Action | Equivalent Hotkey |
+|--------|------|--------|-------------------|
+| `POST` | `/api/dev/hotkeys/clear` | Clear console output | `c` |
+| `POST` | `/api/dev/hotkeys/freeze` | Toggle freeze/unfreeze log output | `f` |
+| `POST` | `/api/dev/hotkeys/verbose` | Toggle verbose mode (debug/info) | `v` |
+| `GET` | `/api/dev/hotkeys/config` | Inspect resolved configuration (masked) | `i` |
+| `GET` | `/api/dev/hotkeys/status` | Get current state (frozen, verbose) | -- |
+| `GET` | `/api/dev/hotkeys/help` | List available hotkeys and descriptions | `h` |
+
+**Inputs**:
+- `NODE_ENV=development` (routes only mounted in development mode)
+- `ConsoleCommands` instance injected via `ApiServices`
+
+**Outputs**:
+
+`POST /api/dev/hotkeys/verbose`:
+```json
+{
+  "success": true,
+  "data": { "action": "verbose", "verbose": true },
+  "metadata": { "timestamp": "2026-02-26T10:00:00Z" }
+}
+```
+
+`GET /api/dev/hotkeys/status`:
+```json
+{
+  "success": true,
+  "data": { "frozen": false, "verbose": true },
+  "metadata": { "timestamp": "2026-02-26T10:00:00Z" }
+}
+```
+
+`GET /api/dev/hotkeys/help`:
+```json
+{
+  "success": true,
+  "data": {
+    "action": "help",
+    "hotkeys": [
+      { "key": "c", "command": "clear", "description": "Clear console (including scrollback buffer)" },
+      { "key": "f", "command": "freeze", "description": "Freeze / unfreeze log output" },
+      { "key": "v", "command": "verbose", "description": "Toggle verbose mode (switches log level between debug/info)" },
+      { "key": "i", "command": "config", "description": "Inspect resolved configuration (sensitive values masked)" },
+      { "key": "h", "command": "help", "description": "Show available hotkeys" },
+      { "key": "Ctrl+C", "command": "exit", "description": "Graceful exit" }
+    ]
+  },
+  "metadata": { "timestamp": "2026-02-26T10:00:00Z" }
+}
+```
+
+**Behavior**:
+- Routes mounted at `/api/dev/hotkeys` inside the existing `if (nodeEnv === "development")` block
+- Each handler performs defense-in-depth `NODE_ENV` check (returns 403 if not in development)
+- Returns 503 if `ConsoleCommands` instance is null (service unavailable)
+- The `ConsoleCommands` instance is created before `createApp()` and injected into `ApiServices`
+- The `setup()` method (readline) is still called after `server.listen()`
+- Action methods (`executeClear()`, `executeFreeze()`, `executeVerbose()`, `executeInspect()`, `getStatus()`, `getHelp()`) return structured data used by both console and API
+- Swagger tag: "Hotkeys"
+
+**Edge cases**:
+- `NODE_ENV=production` -- routes not mounted (404); handler also returns 403 (defense in depth)
+- `ConsoleCommands` is null -- 503 with descriptive message
+- Config inspector not available -- `executeInspect()` returns `{ action: "inspect", config: null }`
+- Multiple consecutive freeze toggles -- each call toggles the state correctly
+
+---
+
 ## 12.1 API Enhancement Feature Summary by Priority
 
 ### P0 -- Must-Have
@@ -1523,3 +1640,63 @@ Append:
 | F12.2 | Config source tracking (audit trail for config values) |
 | F12.3 | Container-aware Swagger URLs (cloud deployment support) |
 | F12.5 | Development routes (config debugging endpoints) |
+| F12.7 | Hotkey API endpoints (remote console hotkey access) |
+
+### P2 -- Nice-to-Have
+
+| ID | Feature |
+|----|---------|
+| F12.6 | Console hotkeys (interactive developer shortcuts) |
+
+---
+
+## 13. Docker Deployment
+
+### F13.1 Docker Containerization (P1)
+
+**Description**: Package the REST API as a Docker container for production deployment.
+
+**Implementation**:
+- Multi-stage Dockerfile: builder stage compiles TypeScript, production stage contains only compiled JS and production dependencies
+- Base image: `node:20-alpine` for minimal footprint
+- Non-root execution: runs as the built-in `node` user
+- Built-in health check: `wget` against `/api/health` every 30s
+- `.dockerignore` excludes unnecessary files (docs, tests, source maps, .git)
+
+**Docker Files**:
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Multi-stage production image |
+| `.dockerignore` | Build context exclusions |
+| `docker-compose.yml` | Local dev/testing convenience |
+| `.env.docker.example` | Docker-specific env template with production defaults |
+
+**Configuration in Docker**:
+- All configuration via environment variables (no config files in the image)
+- `.env` file loaded by Docker Compose at runtime
+- Docker Compose sets production overrides: `NODE_ENV=production`, `AZURE_FS_API_HOST=0.0.0.0`, `AUTO_SELECT_PORT=false`
+- `PUBLIC_URL` supported for reverse proxy scenarios
+
+**Build & Run**:
+```bash
+docker build -t azure-fs-api .
+docker run --env-file .env -p 3000:3000 azure-fs-api
+docker compose up
+```
+
+**Production Readiness**:
+- Health check endpoints (`/api/health`, `/api/health/ready`)
+- Graceful shutdown on `SIGTERM`/`SIGINT`
+- Container-aware Swagger URL detection
+- Console hotkeys auto-disabled in production
+
+---
+
+## 13.1 Docker Feature Summary by Priority
+
+### P1 -- Important
+
+| ID | Feature |
+|----|---------|
+| F13.1 | Docker containerization (multi-stage build, non-root, health checks) |

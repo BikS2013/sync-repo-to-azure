@@ -11,6 +11,8 @@ import { createFolderRoutes } from "./folder.routes";
 import { createMetaRoutes } from "./meta.routes";
 import { createTagRoutes } from "./tags.routes";
 import { createDevRoutes } from "./dev.routes";
+import { createHotkeyRoutes } from "./hotkeys.routes";
+import { ConsoleCommands } from "../../utils/console-commands.utils";
 
 /**
  * Services passed to the route registration function.
@@ -22,6 +24,8 @@ export interface ApiServices {
   logger: Logger;
   /** Config source tracker (populated by resolveApiConfig, used by dev routes). */
   sourceTracker?: ConfigSourceTracker;
+  /** Console commands instance (populated in non-production environments, used by hotkey routes). */
+  consoleCommands?: ConsoleCommands;
 }
 
 /**
@@ -60,6 +64,7 @@ export function registerApiRoutes(app: Express, services: ApiServices): void {
   // Development-only routes (only mounted when NODE_ENV=development)
   if (config.api.nodeEnv === "development") {
     app.use("/api/dev", createDevRoutes(services));
+    app.use("/api/dev/hotkeys", createHotkeyRoutes(services));
   }
 
   // --- 404 handler for unmatched routes ---

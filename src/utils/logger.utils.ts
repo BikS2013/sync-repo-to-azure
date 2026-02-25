@@ -12,17 +12,29 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
  * Logs to stderr to keep stdout clean for command output (especially in --json mode).
  */
 export class Logger {
-  private level: LogLevel;
+  private configuredLevel: LogLevel;
   private verbose: boolean;
 
   constructor(level: LogLevel, verbose: boolean = false) {
-    this.level = level;
+    this.configuredLevel = level;
     this.verbose = verbose;
 
     // When verbose mode is on, force debug level
     if (this.verbose) {
-      this.level = "debug";
+      this.configuredLevel = "debug";
     }
+  }
+
+  /**
+   * Effective log level, accounting for runtime override via AZURE_FS_LOG_LEVEL env var.
+   * This allows the console hotkey 'v' toggle to take effect without restarting.
+   */
+  private get level(): LogLevel {
+    const envLevel = process.env.AZURE_FS_LOG_LEVEL;
+    if (envLevel && envLevel in LOG_LEVEL_ORDER) {
+      return envLevel as LogLevel;
+    }
+    return this.configuredLevel;
   }
 
   debug(message: string, data?: Record<string, unknown>): void {

@@ -16,6 +16,7 @@ import { createRequestLoggerMiddleware } from "./middleware/request-logger.middl
 import { createTimeoutMiddleware } from "./middleware/timeout.middleware";
 import { registerApiRoutes, ApiServices } from "./routes/index";
 import { createSwaggerSpec } from "./swagger/config";
+import { ConsoleCommands } from "../utils/console-commands.utils";
 
 /**
  * Create the Express application with all middleware and routes.
@@ -34,6 +35,7 @@ export function createApp(
   metadataService: MetadataService,
   logger: Logger,
   actualPort?: number,
+  consoleCommands?: ConsoleCommands,
 ): Express {
   const app = express();
 
@@ -72,6 +74,7 @@ export function createApp(
     config,
     logger,
     sourceTracker: config.sourceTracker,
+    consoleCommands,
   };
   registerApiRoutes(app, services);
 
@@ -136,16 +139,25 @@ export async function startServer(): Promise<void> {
     }
   }
 
-  // 5. Create Express app (pass actualPort only when it differs from configured port)
+  // 5. Create ConsoleCommands instance before createApp so it can be injected into routes
+  //    (only in non-production environments). setup() is called after server.listen().
+  let consoleCommands: ConsoleCommands | null = null;
+  if (config.api.nodeEnv !== "production") {
+    const inspector = ConsoleCommands.createInspector(config);
+    consoleCommands = new ConsoleCommands(inspector);
+  }
+
+  // 6. Create Express app (pass actualPort only when it differs from configured port)
   const app = createApp(
     config,
     blobService,
     metadataService,
     logger,
     actualPort !== config.api.port ? actualPort : undefined,
+    consoleCommands ?? undefined,
   );
 
-  // 6. Start HTTP server
+  // 7. Start HTTP server
   const server = http.createServer(app);
 
   // Safety net: handle port conflict race condition (between isPortAvailable and listen)
@@ -179,6 +191,12 @@ export async function startServer(): Promise<void> {
       process.stdout.write(`  Note:      Auto-selected port ${actualPort} (configured: ${config.api.port})\n`);
     }
     process.stdout.write(`\n`);
+
+    // Setup console hotkeys readline (non-production only)
+    // Must be called after server.listen() since readline needs a running event loop
+    if (consoleCommands) {
+      consoleCommands.setup();
+    }
   });
 
   // --- Graceful shutdown ---
@@ -194,6 +212,12 @@ export async function startServer(): Promise<void> {
 
     shutdownInProgress = true;
     logger.info(`Received ${signal}, shutting down gracefully...`);
+
+    // Cleanup console hotkeys
+    if (consoleCommands) {
+      consoleCommands.cleanup();
+      consoleCommands = null;
+    }
 
     // Stop accepting new connections
     server.close(() => {

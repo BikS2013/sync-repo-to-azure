@@ -686,7 +686,8 @@ npm run clean      # Remove dist/
         access and integration with web applications or AI agents.
 
         Start commands:
-          npm run api          Development mode (ts-node)
+          npm run api          Development mode (ts-node, single run)
+          npm run api:dev      Development mode with auto-reload (nodemon + ts-node, restarts on .ts changes)
           npm run api:start    Production mode (compiled JS, requires npm run build first)
 
         Endpoints:
@@ -729,6 +730,14 @@ npm run clean      # Remove dist/
           Development (mounted at /api/dev, only when NODE_ENV=development):
             GET    /api/dev/env                 List all environment variables (masked sensitive values)
             GET    /api/dev/env/:key            Get a specific environment variable by name
+
+          Hotkeys (mounted at /api/dev/hotkeys, only when NODE_ENV=development):
+            POST   /api/dev/hotkeys/clear       Clear console output
+            POST   /api/dev/hotkeys/freeze      Toggle freeze/unfreeze log output
+            POST   /api/dev/hotkeys/verbose     Toggle verbose mode (debug/info)
+            GET    /api/dev/hotkeys/config      Inspect resolved configuration (masked)
+            GET    /api/dev/hotkeys/status      Get current hotkey state (frozen, verbose)
+            GET    /api/dev/hotkeys/help        List available hotkeys and descriptions
 
         Configuration:
           All 6 AZURE_FS_API_* environment variables plus NODE_ENV and AUTO_SELECT_PORT
@@ -851,6 +860,7 @@ src/
       meta.routes.ts                - /api/v1/meta CRUD endpoints
       tags.routes.ts                - /api/v1/tags CRUD + query endpoints
       dev.routes.ts                 - /api/dev/env development-only routes
+      hotkeys.routes.ts             - /api/dev/hotkeys remote console hotkey routes
     controllers/
       file.controller.ts            - File operation request handlers
       folder.controller.ts          - Folder operation request handlers
@@ -858,6 +868,7 @@ src/
       meta.controller.ts            - Metadata operation request handlers
       tags.controller.ts            - Tags operation request handlers
       dev.controller.ts             - Development diagnostic endpoint handlers
+      hotkeys.controller.ts         - Remote console hotkey action handlers
     middleware/
       error-handler.middleware.ts    - Global error handling middleware
       request-logger.middleware.ts   - HTTP request logging
@@ -906,4 +917,411 @@ src/
     stream.utils.ts                 - Stream helpers
     concurrency.utils.ts            - Promise-based parallel execution limiter
     port-checker.utils.ts           - TCP port availability check and process identification
+    console-commands.utils.ts       - Interactive console hotkeys for development/debugging
 ```
+
+## Console Hotkeys
+
+The `ConsoleCommands` class (`src/utils/console-commands.utils.ts`) provides interactive keyboard controls during API development. Automatically enabled when `NODE_ENV !== "production"`.
+
+**Hotkeys** (type letter + Enter):
+
+| Key | Action |
+|-----|--------|
+| `c` | Clear console (including scrollback buffer) |
+| `f` | Freeze / unfreeze log output |
+| `v` | Toggle verbose mode (switches `AZURE_FS_LOG_LEVEL` between debug/info) |
+| `i` | Inspect resolved configuration (sensitive values masked) |
+| `h` | Show help menu |
+| `Ctrl+C` | Graceful exit |
+
+**Integration**: Initialized in `src/api/server.ts` after the HTTP server starts listening. Cleaned up during graceful shutdown. Uses `chalk` for colored terminal output.
+
+## API Usage Guide (curl)
+
+### Base URL
+
+Set the `BASE` variable according to your environment before running any curl command:
+
+```bash
+# Development (npm run api)
+BASE=http://localhost:3000
+
+# Docker container (port 4100 mapped to internal 3000)
+BASE=http://localhost:4100
+```
+
+All examples below use `$BASE` as the base URL.
+
+---
+
+### Health Check
+
+```bash
+# Liveness check (always 200 if process is alive)
+curl -s $BASE/api/health
+
+# Readiness check (verifies Azure Storage connectivity)
+curl -s $BASE/api/health/ready
+```
+
+---
+
+### Files
+
+#### Upload a file
+
+```bash
+curl -s -X POST $BASE/api/v1/files \
+  -F "file=@./report.pdf" \
+  -F "remotePath=documents/report.pdf"
+
+# With metadata
+curl -s -X POST $BASE/api/v1/files \
+  -F "file=@./data.csv" \
+  -F "remotePath=data/export.csv" \
+  -F "metadata[source]=etl" \
+  -F "metadata[date]=2026-02-26"
+```
+
+#### Download a file
+
+```bash
+# Download to stdout (JSON response with content)
+curl -s $BASE/api/v1/files/documents/report.pdf
+
+# Save to local file
+curl -s $BASE/api/v1/files/documents/report.pdf --output ./report.pdf
+```
+
+#### Check if a file exists
+
+```bash
+# Returns 200 if exists, 404 if not (HEAD request -- no body)
+curl -s -o /dev/null -w "%{http_code}" -X HEAD $BASE/api/v1/files/documents/report.pdf
+```
+
+#### Get file info (properties, metadata, tags)
+
+```bash
+curl -s $BASE/api/v1/files/documents/report.pdf/info
+```
+
+#### Replace file content
+
+```bash
+curl -s -X PUT $BASE/api/v1/files/documents/report.pdf \
+  -F "file=@./updated-report.pdf"
+
+# With metadata
+curl -s -X PUT $BASE/api/v1/files/documents/report.pdf \
+  -F "file=@./updated-report.pdf" \
+  -F "metadata[version]=3"
+```
+
+#### Delete a file
+
+```bash
+curl -s -X DELETE $BASE/api/v1/files/documents/report.pdf
+```
+
+---
+
+### Folders
+
+#### List folder contents
+
+```bash
+# List root (use %2F for the root path)
+curl -s $BASE/api/v1/folders/%2F
+
+# List a subfolder
+curl -s $BASE/api/v1/folders/documents/
+
+# Recursive listing (query param)
+curl -s "$BASE/api/v1/folders/documents/?recursive=true"
+```
+
+#### Create a virtual folder
+
+```bash
+curl -s -X POST $BASE/api/v1/folders/data/exports/2026/
+```
+
+#### Delete a folder (recursive)
+
+```bash
+curl -s -X DELETE $BASE/api/v1/folders/temp/
+```
+
+#### Check if a folder exists
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" -X HEAD $BASE/api/v1/folders/documents/
+```
+
+---
+
+### Edit Operations
+
+#### Patch (find-and-replace)
+
+```bash
+# Literal string replace
+curl -s -X PATCH $BASE/api/v1/edit/patch/config/settings.json \
+  -H "Content-Type: application/json" \
+  -d '{"find": "localhost", "replace": "production.example.com"}'
+
+# Regex replace
+curl -s -X PATCH $BASE/api/v1/edit/patch/documents/readme.md \
+  -H "Content-Type: application/json" \
+  -d '{"find": "v1\\.\\d+", "replace": "v2.0", "regex": true, "flags": "gi"}'
+```
+
+#### Append / Prepend content
+
+```bash
+# Append to end (default)
+curl -s -X PATCH $BASE/api/v1/edit/append/logs/app.log \
+  -H "Content-Type: application/json" \
+  -d '{"content": "New log entry\n"}'
+
+# Prepend to start
+curl -s -X PATCH $BASE/api/v1/edit/append/documents/readme.md \
+  -H "Content-Type: application/json" \
+  -d '{"content": "# Header\n\n", "position": "start"}'
+```
+
+#### Edit workflow (two-phase: download then re-upload)
+
+```bash
+# Phase 1: Download for editing (returns local path + ETag)
+curl -s -X POST $BASE/api/v1/edit/download/documents/readme.md
+
+# Phase 2: Re-upload after editing (requires ETag from phase 1)
+curl -s -X PUT $BASE/api/v1/edit/upload/documents/readme.md \
+  -F "file=@/tmp/azure-fs-edit-abc123.md" \
+  -H "If-Match: \"0x8DC1234567890AB\""
+```
+
+---
+
+### Metadata
+
+#### Get all metadata
+
+```bash
+curl -s $BASE/api/v1/meta/documents/report.pdf
+```
+
+#### Set metadata (replace all)
+
+```bash
+curl -s -X PUT $BASE/api/v1/meta/documents/report.pdf \
+  -H "Content-Type: application/json" \
+  -d '{"author": "john", "department": "engineering"}'
+```
+
+#### Update metadata (merge)
+
+```bash
+curl -s -X PATCH $BASE/api/v1/meta/documents/report.pdf \
+  -H "Content-Type: application/json" \
+  -d '{"version": "4", "reviewed": "true"}'
+```
+
+#### Delete metadata keys
+
+```bash
+curl -s -X DELETE $BASE/api/v1/meta/documents/report.pdf \
+  -H "Content-Type: application/json" \
+  -d '{"keys": ["draft", "temp_flag"]}'
+```
+
+---
+
+### Tags
+
+#### Get all tags
+
+```bash
+curl -s $BASE/api/v1/tags/documents/report.pdf
+```
+
+#### Set tags (replace all)
+
+```bash
+curl -s -X PUT $BASE/api/v1/tags/documents/report.pdf \
+  -H "Content-Type: application/json" \
+  -d '{"department": "engineering", "status": "published"}'
+```
+
+#### Query blobs by tag filter
+
+```bash
+# OData tag filter expression
+curl -s "$BASE/api/v1/tags?filter=department%20%3D%20%27engineering%27"
+
+# Multiple conditions
+curl -s "$BASE/api/v1/tags?filter=department%20%3D%20%27engineering%27%20AND%20status%20%3D%20%27published%27"
+```
+
+---
+
+### Development Endpoints (NODE_ENV=development only)
+
+#### Environment Variables
+
+```bash
+# List all environment variables (sensitive values masked)
+curl -s $BASE/api/dev/env
+
+# Get a specific environment variable
+curl -s $BASE/api/dev/env/AZURE_STORAGE_ACCOUNT_URL
+```
+
+#### Hotkeys (remote console commands)
+
+```bash
+# Get current hotkey state (frozen, verbose)
+curl -s $BASE/api/dev/hotkeys/status
+
+# Toggle verbose mode (debug/info)
+curl -s -X POST $BASE/api/dev/hotkeys/verbose
+
+# Toggle freeze/unfreeze log output
+curl -s -X POST $BASE/api/dev/hotkeys/freeze
+
+# Inspect resolved configuration (sensitive values masked)
+curl -s $BASE/api/dev/hotkeys/config
+
+# Clear console output
+curl -s -X POST $BASE/api/dev/hotkeys/clear
+
+# List available hotkeys and descriptions
+curl -s $BASE/api/dev/hotkeys/help
+```
+
+---
+
+### Swagger Documentation
+
+```bash
+# Open Swagger UI in browser
+open $BASE/api/docs
+
+# Download OpenAPI JSON spec
+curl -s $BASE/api/docs.json
+```
+
+---
+
+### Quick Smoke Test
+
+Run this sequence to verify the API is fully operational:
+
+```bash
+BASE=http://localhost:3000  # or http://localhost:4100 for Docker
+
+# 1. Health check
+curl -s $BASE/api/health
+
+# 2. Create a folder
+curl -s -X POST $BASE/api/v1/folders/test-smoke/
+
+# 3. Upload a file
+echo "Hello Azure FS" > /tmp/smoke-test.txt
+curl -s -X POST $BASE/api/v1/files \
+  -F "file=@/tmp/smoke-test.txt" \
+  -F "remotePath=test-smoke/hello.txt"
+
+# 4. Download the file
+curl -s $BASE/api/v1/files/test-smoke/hello.txt
+
+# 5. Get file info
+curl -s $BASE/api/v1/files/test-smoke/hello.txt/info
+
+# 6. Set metadata
+curl -s -X PUT $BASE/api/v1/meta/test-smoke/hello.txt \
+  -H "Content-Type: application/json" \
+  -d '{"env": "test"}'
+
+# 7. Get metadata
+curl -s $BASE/api/v1/meta/test-smoke/hello.txt
+
+# 8. Patch content
+curl -s -X PATCH $BASE/api/v1/edit/patch/test-smoke/hello.txt \
+  -H "Content-Type: application/json" \
+  -d '{"find": "Hello", "replace": "Goodbye"}'
+
+# 9. List folder contents
+curl -s $BASE/api/v1/folders/test-smoke/
+
+# 10. Cleanup: delete folder and contents
+curl -s -X DELETE $BASE/api/v1/folders/test-smoke/
+
+# Cleanup temp file
+rm /tmp/smoke-test.txt
+```
+
+## Docker Deployment
+
+### Container Commands
+
+**Build image:**
+```bash
+docker build -t azure-fs-api .
+```
+
+**Start container:**
+```bash
+docker run -d --name azure-fs-api --env-file .env -e DOCKER_HOST_URL=http://localhost:4100 -p 4100:3000 azure-fs-api
+```
+
+**Stop container:**
+```bash
+docker stop azure-fs-api
+```
+
+**Delete container:**
+```bash
+docker rm azure-fs-api
+```
+
+**Rebuild image (stop, delete, rebuild, redeploy):**
+```bash
+docker stop azure-fs-api 2>/dev/null; docker rm azure-fs-api 2>/dev/null; docker rmi azure-fs-api 2>/dev/null; docker build -t azure-fs-api . && docker run -d --name azure-fs-api --env-file .env -e DOCKER_HOST_URL=http://localhost:4100 -p 4100:3000 azure-fs-api
+```
+
+### Docker Image Details
+
+- **Base image**: `node:20-alpine` (minimal footprint)
+- **Multi-stage build**: Builder stage compiles TypeScript, production stage contains only compiled JS and production dependencies
+- **Non-root user**: Runs as the `node` user for security
+- **Health check**: Built-in `wget` check against `/api/health` every 30s
+- **Exposed port**: 3000 (configurable via `AZURE_FS_API_PORT` env var)
+
+### Docker Files
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Multi-stage production image (builder + runtime) |
+| `.dockerignore` | Excludes unnecessary files from build context |
+| `docker-compose.yml` | Local dev/testing convenience with health checks |
+| `.env.docker.example` | Docker-specific env template with production defaults |
+
+### Configuration for Docker
+
+All configuration is passed via environment variables. Copy `.env.docker.example` to `.env` and fill in the required values:
+
+```bash
+cp .env.docker.example .env
+# Edit .env with your Azure Storage credentials
+docker compose up
+```
+
+Key Docker-specific settings:
+- `NODE_ENV=development` (enables dev features, console hotkeys, hotkey API endpoints)
+- `AZURE_FS_API_HOST=0.0.0.0` (required for container networking)
+- `AUTO_SELECT_PORT=false` (deterministic port in containers)
+- `PUBLIC_URL` (optional, set if behind a reverse proxy)
