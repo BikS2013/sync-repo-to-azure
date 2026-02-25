@@ -1,5 +1,6 @@
 import { Express, Request, Response } from "express";
 import { ApiResolvedConfig } from "../../types/api-config.types";
+import { ConfigSourceTracker } from "../../types/config.types";
 import { BlobFileSystemService } from "../../services/blob-filesystem.service";
 import { MetadataService } from "../../services/metadata.service";
 import { Logger } from "../../utils/logger.utils";
@@ -9,6 +10,7 @@ import { createEditRoutes } from "./edit.routes";
 import { createFolderRoutes } from "./folder.routes";
 import { createMetaRoutes } from "./meta.routes";
 import { createTagRoutes } from "./tags.routes";
+import { createDevRoutes } from "./dev.routes";
 
 /**
  * Services passed to the route registration function.
@@ -18,6 +20,8 @@ export interface ApiServices {
   metadataService: MetadataService;
   config: ApiResolvedConfig;
   logger: Logger;
+  /** Config source tracker (populated by resolveApiConfig, used by dev routes). */
+  sourceTracker?: ConfigSourceTracker;
 }
 
 /**
@@ -30,6 +34,7 @@ export interface ApiServices {
  *   /api/v1/folders -> folder.routes.ts
  *   /api/v1/meta   -> meta.routes.ts
  *   /api/v1/tags   -> tags.routes.ts
+ *   /api/dev        -> dev.routes.ts (development only)
  */
 export function registerApiRoutes(app: Express, services: ApiServices): void {
   const { config } = services;
@@ -51,6 +56,11 @@ export function registerApiRoutes(app: Express, services: ApiServices): void {
 
   // Tag operation routes
   app.use("/api/v1/tags", createTagRoutes(services.metadataService));
+
+  // Development-only routes (only mounted when NODE_ENV=development)
+  if (config.api.nodeEnv === "development") {
+    app.use("/api/dev", createDevRoutes(services));
+  }
 
   // --- 404 handler for unmatched routes ---
   app.use((_req: Request, res: Response) => {

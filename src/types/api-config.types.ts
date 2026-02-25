@@ -1,4 +1,10 @@
 import { ResolvedConfig } from "./config.types";
+import { ConfigSourceTracker } from "./config.types";
+
+/**
+ * Valid NODE_ENV values for the API server.
+ */
+export type NodeEnvironment = "development" | "production" | "test";
 
 /**
  * API-specific configuration settings.
@@ -12,6 +18,10 @@ export interface ApiConfig {
   swaggerEnabled: boolean;
   uploadMaxSizeMb: number;
   requestTimeoutMs: number;
+  nodeEnv: NodeEnvironment;
+  autoSelectPort: boolean;
+  swaggerAdditionalServers?: string[];
+  swaggerServerVariables?: boolean;
 }
 
 /**
@@ -21,4 +31,5 @@ export interface ApiConfig {
  */
 export interface ApiResolvedConfig extends ResolvedConfig {
   api: ApiConfig;
+  sourceTracker?: ConfigSourceTracker;
 }

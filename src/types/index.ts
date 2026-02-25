@@ -2,12 +2,15 @@ export {
   AuthMethod,
   LogLevel,
   RetryStrategy,
+  ConfigSourceLabel,
+  ConfigSourceTracker,
   AzureFsConfigFile,
   CliOptions,
   ResolvedConfig,
 } from "./config.types";
 
 export {
+  NodeEnvironment,
   ApiConfig,
   ApiResolvedConfig,
 } from "./api-config.types";

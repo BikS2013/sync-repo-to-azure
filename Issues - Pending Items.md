@@ -2,11 +2,48 @@
 
 ## Pending
 
-_No pending items at this time._
+### P2 - Swagger Priority Order Deviation from Plan (DOCUMENTED)
+
+**Detected**: 2026-02-23 (code review of Plan 005 features)
+**Location**: `src/api/swagger/config.ts` -- `getBaseUrl()`
+
+**Description**: The plan (plan-005) specifies Azure App Service as Priority 1 and PUBLIC_URL as Priority 2 in `getBaseUrl()`. The implementation inverts this: PUBLIC_URL is Priority 1 and Azure App Service is Priority 2. The implementation is correct (PUBLIC_URL should be the explicit override), matching the plan's own acceptance criteria which states "PUBLIC_URL overrides all other container detection." The plan's code sample was inconsistent with its acceptance criteria. No code fix needed -- this is a documentation note.
+
+---
 
 ---
 
 ## Completed
+
+### P2 - Config Source Tracker Key Mismatch with Dev Routes (FIXED)
+
+**Detected**: 2026-02-23 (code review of Plan 005 features)
+**Fixed**: 2026-02-23
+**Location**: `src/config/config.loader.ts`
+
+**Resolution**: Added `EnvConfigResult` interface and `envVarNames` reverse-mapping to `loadEnvConfig()`. The `mergeConfigSection()` now tracks by both dot-notation keys AND env var names via the `envVarNames` field on `SourcedOverride`. Dev routes can now look up sources by env var name (e.g., `NODE_ENV`, `AZURE_FS_API_PORT`).
+
+---
+
+### P2 - Missing nodeEnv in AzureFsConfigFile.api Type (FIXED)
+
+**Detected**: 2026-02-23 (code review of Plan 005 features)
+**Fixed**: 2026-02-23
+**Location**: `src/types/config.types.ts` -- `AzureFsConfigFile.api`
+
+**Resolution**: The `nodeEnv?: string` field was missing from the `AzureFsConfigFile.api` optional type definition. While JSON parsing still captured the value at runtime (TypeScript types are compile-time only), this was a type safety gap. Added `nodeEnv?: string` to the interface.
+
+---
+
+### P2 - Swagger Config Reads process.env Instead of apiConfig (FIXED)
+
+**Detected**: 2026-02-23 (code review of Plan 005 features)
+**Fixed**: 2026-02-23
+**Location**: `src/api/swagger/config.ts` -- `buildSwaggerServers()`
+
+**Resolution**: `buildSwaggerServers()` was reading `process.env.AZURE_FS_API_SWAGGER_SERVER_VARIABLES` and `process.env.AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` directly, even though these values are already loaded, validated, and available on the `apiConfig` object (as `apiConfig.swaggerServerVariables` and `apiConfig.swaggerAdditionalServers`). Changed to use `apiConfig` fields, eliminating the duplication and ensuring the config system is the single source of truth.
+
+---
 
 ### Feature - REST API Layer (IMPLEMENTED)
 

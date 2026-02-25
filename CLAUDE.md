@@ -1,3 +1,11 @@
+# Highest Priority Instructions
+- Each time you add an operation to the tool you must ensure that the following part have been updated accordingly
+  - The project-design.md and project-functions.md documents. If you detect any gap or inconsistency between the actual code and these documents you must register it to the "Issues - Pending Items.md" document.
+  - The api which must be aligned with the functionalities offered by the tool. Again any gap or incosistency must be registered to the "Issues - Pending Items.md" document.
+  - The api swagger content must be updated according to the api endpoints. Any gap or incosistency must be registered to the "Issues - Pending Items.md" document.
+  - The project CLAUDE.md document must be updated with both the api and the tool options. Any gap or incosistency must be registered to the "Issues - Pending Items.md" document.
+  - The configuration-guide.md document must be updated to the latest status. Any gap or incosistency must be registered to the "Issues - Pending Items.md" document.
+
 # Azure Blob Storage File System CLI Tool (azure-fs)
 
 ## Project Overview
@@ -718,10 +726,14 @@ npm run clean      # Remove dist/
             GET    /api/v1/tags/:path           Get all tags for a blob
             PUT    /api/v1/tags/:path           Set (replace all) tags
 
+          Development (mounted at /api/dev, only when NODE_ENV=development):
+            GET    /api/dev/env                 List all environment variables (masked sensitive values)
+            GET    /api/dev/env/:key            Get a specific environment variable by name
+
         Configuration:
-          All 6 AZURE_FS_API_* environment variables must be set (see Environment
-          Variables section). Alternatively, configure via the "api" section in
-          .azure-fs.json.
+          All 6 AZURE_FS_API_* environment variables plus NODE_ENV and AUTO_SELECT_PORT
+          must be set (see Environment Variables section). Alternatively, configure
+          via the "api" section in .azure-fs.json.
 
         Health check:
           GET http://localhost:3000/api/health
@@ -776,6 +788,44 @@ CLI Flags > Environment Variables > Config File (.azure-fs.json)
 | `AZURE_FS_API_SWAGGER_ENABLED` | Enable Swagger UI at /api/docs: true/false |
 | `AZURE_FS_API_UPLOAD_MAX_SIZE_MB` | Maximum upload file size in MB for API uploads |
 | `AZURE_FS_API_REQUEST_TIMEOUT_MS` | Request timeout in milliseconds for API requests |
+| `NODE_ENV` | Application environment: development, production, test (required for API mode) |
+| `AUTO_SELECT_PORT` | Auto-select available port on conflict: true/false (required for API mode) |
+| `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` | Comma-separated additional Swagger server URLs (optional) |
+| `AZURE_FS_API_SWAGGER_SERVER_VARIABLES` | Enable Swagger server variables for URL editing: true/false (optional) |
+| `PUBLIC_URL` | Explicit public URL override for Swagger server URL (optional, any environment) |
+| `WEBSITE_HOSTNAME` | Auto-set by Azure App Service (used for Swagger URL detection) |
+| `WEBSITE_SITE_NAME` | Auto-set by Azure App Service (used for HTTPS detection) |
+| `K8S_SERVICE_HOST` | Auto-injected by Kubernetes (used for Swagger URL detection) |
+| `K8S_SERVICE_PORT` | Auto-injected by Kubernetes (used for Swagger URL detection) |
+| `DOCKER_HOST_URL` | Docker container public URL for Swagger URL detection (optional) |
+| `AZURE_FS_API_USE_HTTPS` | Force HTTPS for Kubernetes environments: true/false (optional) |
+
+## PortChecker Utility
+
+The `PortChecker` class (`src/utils/port-checker.utils.ts`) provides proactive TCP port conflict detection before Express attempts to listen. It is a standalone utility with no project dependencies.
+
+**Behavior**:
+- `isPortAvailable(port, host)`: Attempts to bind a temporary `net.Server`. Returns `true` if binding succeeds, `false` if `EADDRINUSE` or other error.
+- `findAvailablePort(startPort, maxAttempts, host)`: Sequentially scans ports from `startPort` to `startPort + maxAttempts - 1`. Returns the first available port or an error.
+- `getProcessUsingPort(port)`: Uses `lsof` to identify the process using a port (macOS/Linux only). Returns `null` on Windows or failure. Informational only.
+
+**Server startup flow** (in `src/api/server.ts`):
+1. Check if configured port is available via `PortChecker.isPortAvailable()`.
+2. If unavailable and `AUTO_SELECT_PORT=true`, find next available port via `PortChecker.findAvailablePort()`.
+3. If unavailable and `AUTO_SELECT_PORT=false`, exit with error code 1.
+4. The `server.on("error")` handler remains as a safety net for race conditions.
+
+## Container-Aware Swagger URLs
+
+The Swagger/OpenAPI spec (`src/api/swagger/config.ts`) auto-detects the runtime environment to generate correct server URLs in the following priority order:
+
+1. **PUBLIC_URL** - Explicit override for any environment
+2. **WEBSITE_HOSTNAME** - Azure App Service (HTTPS when WEBSITE_SITE_NAME is set)
+3. **K8S_SERVICE_HOST + K8S_SERVICE_PORT** - Kubernetes (HTTPS when AZURE_FS_API_USE_HTTPS=true)
+4. **DOCKER_HOST_URL** - Docker container
+5. **Local development** - `http://{host}:{port}`
+
+When `api.swaggerServerVariables` is `true`, the primary server entry uses templated variables (`{protocol}`, `{host}`, `{port}`) for interactive editing in Swagger UI. Additional servers can be added via `api.swaggerAdditionalServers`.
 
 ## Authentication Methods
 
@@ -800,12 +850,14 @@ src/
       edit.routes.ts                - /api/v1/files/:path/patch|append|edit
       meta.routes.ts                - /api/v1/meta CRUD endpoints
       tags.routes.ts                - /api/v1/tags CRUD + query endpoints
+      dev.routes.ts                 - /api/dev/env development-only routes
     controllers/
       file.controller.ts            - File operation request handlers
       folder.controller.ts          - Folder operation request handlers
       edit.controller.ts            - Edit operation request handlers
       meta.controller.ts            - Metadata operation request handlers
       tags.controller.ts            - Tags operation request handlers
+      dev.controller.ts             - Development diagnostic endpoint handlers
     middleware/
       error-handler.middleware.ts    - Global error handling middleware
       request-logger.middleware.ts   - HTTP request logging
@@ -830,7 +882,8 @@ src/
     config.schema.ts                - Config validation (no fallbacks)
   types/
     index.ts                        - Barrel export
-    config.types.ts                 - AzureFsConfig, AuthMethod, ResolvedConfig
+    config.types.ts                 - AzureFsConfig, AuthMethod, ResolvedConfig, ConfigSourceTracker
+    api-config.types.ts             - ApiConfig, ApiResolvedConfig, NodeEnvironment
     command-result.types.ts         - CommandResult<T>
     filesystem.types.ts             - FileSystemItem, FileInfo, FolderInfo
     patch.types.ts                  - PatchInstruction, PatchResult
@@ -852,4 +905,5 @@ src/
     content-type.utils.ts           - MIME type detection
     stream.utils.ts                 - Stream helpers
     concurrency.utils.ts            - Promise-based parallel execution limiter
+    port-checker.utils.ts           - TCP port availability check and process identification
 ```

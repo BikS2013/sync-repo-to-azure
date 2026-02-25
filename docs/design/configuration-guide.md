@@ -519,6 +519,123 @@ Store in the `.azure-fs.json` config file or `.env` file.
 
 ---
 
+### `NODE_ENV`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Controls environment-specific behavior for the API server: error stack traces in responses, Swagger server description, and gating of development-only routes (`/api/dev/*`). |
+| **Required** | Yes (when running in API mode) |
+| **Type** | String (enum) |
+| **Config file key** | `api.nodeEnv` |
+| **Environment variable** | `NODE_ENV` |
+| **CLI flag** | Not available |
+
+**Options:**
+
+| Value | Description | When to use |
+|-------|-------------|-------------|
+| `development` | Error responses include stack traces. Swagger shows "Development server". Dev routes (`/api/dev/env`) are mounted. | Local development and debugging. |
+| `production` | Stack traces are suppressed in error responses. Swagger shows "Production server". Dev routes are NOT mounted. | Production deployments. |
+| `test` | Same as production (no stack traces, no dev routes). | Automated testing environments. |
+
+**Recommended management:**
+Set as an environment variable. Use `development` locally, `production` in deployed environments, and `test` in CI/CD test runners. This follows the standard Node.js convention.
+
+---
+
+### `AUTO_SELECT_PORT`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Controls whether the API server automatically finds an available port when the configured port is already in use. |
+| **Required** | Yes (when running in API mode) |
+| **Type** | Boolean |
+| **Config file key** | `api.autoSelectPort` |
+| **Environment variable** | `AUTO_SELECT_PORT` |
+| **CLI flag** | Not available |
+
+**Options:**
+
+| Value | Description |
+|-------|-------------|
+| `true` | If the configured port is in use, the server scans up to 10 subsequent ports to find an available one. The actual port is logged and reflected in the Swagger docs. |
+| `false` | If the configured port is in use, the server exits immediately with error code 1 and a helpful message identifying which process holds the port (macOS/Linux). |
+
+**Recommended management:**
+Set to `true` for development (avoids port conflicts when running multiple instances). Set to `false` for production (you want deterministic port assignment).
+
+---
+
+### `api.swaggerAdditionalServers`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Adds extra server entries to the Swagger/OpenAPI spec, allowing testing against multiple environments from the Swagger UI. |
+| **Required** | No (optional) |
+| **Type** | Comma-separated string (env) or array of strings (config file) |
+| **Config file key** | `api.swaggerAdditionalServers` |
+| **Environment variable** | `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` |
+| **CLI flag** | Not available |
+
+**How to use:**
+Provide one or more full URLs separated by commas. Each URL appears as an additional server in the Swagger UI dropdown.
+
+Example: `https://staging.example.com,https://prod.example.com`
+
+**Recommended management:**
+Set as an environment variable in environments where you need to test against multiple backends from Swagger UI. Not needed for most setups.
+
+---
+
+### `api.swaggerServerVariables`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Enables OpenAPI server variables (`{protocol}`, `{host}`, `{port}`) in the Swagger spec, allowing users to interactively edit the target server URL in the Swagger UI. |
+| **Required** | No (optional) |
+| **Type** | Boolean |
+| **Config file key** | `api.swaggerServerVariables` |
+| **Environment variable** | `AZURE_FS_API_SWAGGER_SERVER_VARIABLES` |
+| **CLI flag** | Not available |
+
+**Options:**
+
+| Value | Description |
+|-------|-------------|
+| `true` | The primary server entry uses a templated URL (`{protocol}://{host}:{port}`) with editable variables in Swagger UI. Defaults are inferred from the detected base URL. |
+| `false` or unset | The primary server entry uses a fixed URL. |
+
+**Recommended management:**
+Enable in development if you frequently switch between hosts or protocols. Leave disabled in production.
+
+---
+
+### Container and Cloud Environment Variables (Optional)
+
+These variables are auto-detected or manually set to control how the Swagger server URL is generated. They are all optional and do not go through the config validation system (they are detection signals, not required configuration).
+
+| Variable | Source | Purpose |
+|----------|--------|---------|
+| `PUBLIC_URL` | Manual | Explicit public URL override. Highest priority. Use when none of the auto-detection methods apply. |
+| `WEBSITE_HOSTNAME` | Azure App Service (auto-set) | Hostname of the Azure App Service instance. HTTPS is used when `WEBSITE_SITE_NAME` is also set. |
+| `WEBSITE_SITE_NAME` | Azure App Service (auto-set) | App Service site name. Signals that HTTPS should be used. |
+| `K8S_SERVICE_HOST` | Kubernetes (auto-injected) | Kubernetes service host. Used together with `K8S_SERVICE_PORT`. |
+| `K8S_SERVICE_PORT` | Kubernetes (auto-injected) | Kubernetes service port. |
+| `DOCKER_HOST_URL` | Manual | Full URL for Docker container environments (e.g., `http://host.docker.internal:3000`). |
+| `AZURE_FS_API_USE_HTTPS` | Manual | Set to `true` to force HTTPS in Kubernetes environments. |
+
+**Detection priority order:**
+1. `PUBLIC_URL` (explicit override)
+2. `WEBSITE_HOSTNAME` (Azure App Service)
+3. `K8S_SERVICE_HOST` + `K8S_SERVICE_PORT` (Kubernetes)
+4. `DOCKER_HOST_URL` (Docker)
+5. `http://{host}:{port}` (local development fallback)
+
+**Recommended management:**
+Do not set any of these for local development. In container/cloud environments, the platform-injected variables are set automatically. Use `PUBLIC_URL` only when automatic detection does not produce the correct URL.
+
+---
+
 ## Config File Reference
 
 The config file (`.azure-fs.json`) is the recommended way to store non-secret configuration. Below is a complete example with all fields:
@@ -550,7 +667,9 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
     "corsOrigins": ["*"],
     "swaggerEnabled": true,
     "uploadMaxSizeMb": 100,
-    "requestTimeoutMs": 30000
+    "requestTimeoutMs": 30000,
+    "nodeEnv": "development",
+    "autoSelectPort": true
   }
 }
 ```
@@ -587,6 +706,17 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
 | `AZURE_FS_API_SWAGGER_ENABLED` | `api.swaggerEnabled` | Yes (API mode only) |
 | `AZURE_FS_API_UPLOAD_MAX_SIZE_MB` | `api.uploadMaxSizeMb` | Yes (API mode only) |
 | `AZURE_FS_API_REQUEST_TIMEOUT_MS` | `api.requestTimeoutMs` | Yes (API mode only) |
+| `NODE_ENV` | `api.nodeEnv` | Yes (API mode only) |
+| `AUTO_SELECT_PORT` | `api.autoSelectPort` | Yes (API mode only) |
+| `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` | `api.swaggerAdditionalServers` | No (optional) |
+| `AZURE_FS_API_SWAGGER_SERVER_VARIABLES` | `api.swaggerServerVariables` | No (optional) |
+| `PUBLIC_URL` | Swagger URL override | No (optional, auto-detection) |
+| `WEBSITE_HOSTNAME` | Swagger URL detection | No (auto-set by Azure App Service) |
+| `WEBSITE_SITE_NAME` | Swagger HTTPS detection | No (auto-set by Azure App Service) |
+| `K8S_SERVICE_HOST` | Swagger URL detection | No (auto-injected by Kubernetes) |
+| `K8S_SERVICE_PORT` | Swagger URL detection | No (auto-injected by Kubernetes) |
+| `DOCKER_HOST_URL` | Swagger URL detection | No (optional, Docker) |
+| `AZURE_FS_API_USE_HTTPS` | Swagger HTTPS for K8s | No (optional) |
 
 ---
 

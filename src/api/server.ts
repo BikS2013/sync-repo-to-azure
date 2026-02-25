@@ -9,6 +9,7 @@ import { resolveApiConfig } from "../config/config.loader";
 import { BlobFileSystemService } from "../services/blob-filesystem.service";
 import { MetadataService } from "../services/metadata.service";
 import { Logger } from "../utils/logger.utils";
+import { PortChecker } from "../utils/port-checker.utils";
 import swaggerUi from "swagger-ui-express";
 import { createErrorHandlerMiddleware } from "./middleware/error-handler.middleware";
 import { createRequestLoggerMiddleware } from "./middleware/request-logger.middleware";
@@ -20,12 +21,19 @@ import { createSwaggerSpec } from "./swagger/config";
  * Create the Express application with all middleware and routes.
  * This is a pure factory function -- it does not start listening.
  * Exported separately so it can be used in tests.
+ *
+ * @param config - The fully resolved API configuration.
+ * @param blobService - Shared blob filesystem service instance.
+ * @param metadataService - Shared metadata service instance.
+ * @param logger - Application logger.
+ * @param actualPort - Optional override port (when PortChecker auto-selected a different port).
  */
 export function createApp(
   config: ApiResolvedConfig,
   blobService: BlobFileSystemService,
   metadataService: MetadataService,
   logger: Logger,
+  actualPort?: number,
 ): Express {
   const app = express();
 
@@ -50,7 +58,7 @@ export function createApp(
 
   // 5. Swagger documentation (must be before routes because routes include a 404 catch-all)
   if (config.api.swaggerEnabled) {
-    const swaggerSpec = createSwaggerSpec(config.api);
+    const swaggerSpec = createSwaggerSpec(config.api, actualPort);
     app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
     app.get("/api/docs.json", (_req, res) => {
       res.json(swaggerSpec);
@@ -63,11 +71,13 @@ export function createApp(
     metadataService,
     config,
     logger,
+    sourceTracker: config.sourceTracker,
   };
   registerApiRoutes(app, services);
 
   // 7. Error handler (MUST be registered last -- Express 4-argument signature)
-  app.use(createErrorHandlerMiddleware(logger));
+  //    Pass nodeEnv to control stack trace inclusion in error responses
+  app.use(createErrorHandlerMiddleware(logger, config.api.nodeEnv));
 
   return app;
 }
@@ -76,6 +86,14 @@ export function createApp(
  * Start the HTTP server.
  * Loads API config, creates services, creates Express app, and starts listening.
  * Handles graceful shutdown on SIGTERM/SIGINT and port conflicts.
+ *
+ * Startup sequence:
+ *   1. Load and validate configuration
+ *   2. Create logger and shared services
+ *   3. Check port availability (proactive -- before listen)
+ *   4. Create Express app (with actualPort for correct Swagger URLs)
+ *   5. Start HTTP server
+ *   6. Register graceful shutdown handlers
  */
 export async function startServer(): Promise<void> {
   // 1. Load and validate all configuration (base + API section)
@@ -88,30 +106,66 @@ export async function startServer(): Promise<void> {
   const blobService = new BlobFileSystemService(config, logger);
   const metadataService = new MetadataService(config, logger);
 
-  // 4. Create Express app
-  const app = createApp(config, blobService, metadataService, logger);
+  // 4. Check port availability (proactive port check)
+  let actualPort = config.api.port;
+  const isAvailable = await PortChecker.isPortAvailable(config.api.port, config.api.host);
 
-  // 5. Start HTTP server
+  if (!isAvailable) {
+    // Log which process is using the port (informational, may return null)
+    const processInfo = await PortChecker.getProcessUsingPort(config.api.port);
+    if (processInfo) {
+      logger.warn(`Port ${config.api.port} is in use by: ${processInfo}`);
+    } else {
+      logger.warn(`Port ${config.api.port} is already in use`);
+    }
+
+    if (config.api.autoSelectPort) {
+      const result = await PortChecker.findAvailablePort(config.api.port + 1, 10, config.api.host);
+      if (!result.available) {
+        logger.error(result.error || "Could not find an available port");
+        process.exit(1);
+      }
+      actualPort = result.port;
+      logger.info(`Auto-selected port ${actualPort}`);
+    } else {
+      logger.error(
+        `Port ${config.api.port} is already in use. ` +
+        `Set AUTO_SELECT_PORT=true to auto-select, or choose a different port.`,
+      );
+      process.exit(1);
+    }
+  }
+
+  // 5. Create Express app (pass actualPort only when it differs from configured port)
+  const app = createApp(
+    config,
+    blobService,
+    metadataService,
+    logger,
+    actualPort !== config.api.port ? actualPort : undefined,
+  );
+
+  // 6. Start HTTP server
   const server = http.createServer(app);
 
-  // Port conflict detection
+  // Safety net: handle port conflict race condition (between isPortAvailable and listen)
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
-      logger.error(`Port ${config.api.port} is already in use. Choose a different port.`);
+      logger.error(`Port ${actualPort} is already in use (race condition). Choose a different port.`);
       process.exit(1);
     }
     logger.error(`Server error: ${err.message}`);
     process.exit(1);
   });
 
-  server.listen(config.api.port, config.api.host, () => {
-    const serverUrl = `http://${config.api.host}:${config.api.port}`;
+  server.listen(actualPort, config.api.host, () => {
+    const serverUrl = `http://${config.api.host}:${actualPort}`;
 
     logger.info(`Azure FS API server started`, {
       url: serverUrl,
       healthUrl: `${serverUrl}/api/health`,
       docsUrl: config.api.swaggerEnabled ? `${serverUrl}/api/docs` : "(disabled)",
-      environment: process.env.NODE_ENV || "development",
+      environment: config.api.nodeEnv,
     });
 
     // Also output to stdout for visibility
@@ -120,6 +174,9 @@ export async function startServer(): Promise<void> {
     process.stdout.write(`  Readiness: ${serverUrl}/api/health/ready\n`);
     if (config.api.swaggerEnabled) {
       process.stdout.write(`  Docs:      ${serverUrl}/api/docs\n`);
+    }
+    if (actualPort !== config.api.port) {
+      process.stdout.write(`  Note:      Auto-selected port ${actualPort} (configured: ${config.api.port})\n`);
     }
     process.stdout.write(`\n`);
   });

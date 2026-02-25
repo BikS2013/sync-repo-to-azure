@@ -1,0 +1,112 @@
+import { Router } from "express";
+import { ApiServices } from "./index";
+import { createDevController } from "../controllers/dev.controller";
+
+/**
+ * Create development-only routes.
+ *
+ * These routes are only mounted when NODE_ENV=development (checked in routes/index.ts).
+ * Each handler also performs a defense-in-depth check and returns 403 if not in development.
+ *
+ * Endpoints:
+ *   GET /api/dev/env       - List all environment variables
+ *   GET /api/dev/env/:key  - Get a specific environment variable
+ */
+export function createDevRoutes(services: ApiServices): Router {
+  const router = Router();
+  const controller = createDevController(services);
+
+  /**
+   * @openapi
+   * /api/dev/env:
+   *   get:
+   *     summary: List all environment variables
+   *     description: |
+   *       Returns all environment variables sorted alphabetically with their
+   *       sources and masked sensitive values. Only available in development mode.
+   *     tags: [Development]
+   *     responses:
+   *       200:
+   *         description: All environment variables with sources
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     environment:
+   *                       type: string
+   *                     totalVariables:
+   *                       type: integer
+   *                     variables:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           name:
+   *                             type: string
+   *                           value:
+   *                             type: string
+   *                           source:
+   *                             type: string
+   *                           masked:
+   *                             type: boolean
+   *                     sources:
+   *                       type: object
+   *       403:
+   *         description: Not available outside development mode
+   */
+  router.get("/env", controller.listEnvVars);
+
+  /**
+   * @openapi
+   * /api/dev/env/{key}:
+   *   get:
+   *     summary: Get a specific environment variable
+   *     description: |
+   *       Returns the value and source of a specific environment variable.
+   *       The key is normalized to uppercase. Only available in development mode.
+   *     tags: [Development]
+   *     parameters:
+   *       - in: path
+   *         name: key
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Environment variable name (case-insensitive)
+   *     responses:
+   *       200:
+   *         description: Environment variable details
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     name:
+   *                       type: string
+   *                     value:
+   *                       type: string
+   *                     source:
+   *                       type: string
+   *                     exists:
+   *                       type: boolean
+   *                     masked:
+   *                       type: boolean
+   *       403:
+   *         description: Not available outside development mode
+   *       404:
+   *         description: Variable not found
+   */
+  router.get("/env/:key", controller.getEnvVar);
+
+  return router;
+}

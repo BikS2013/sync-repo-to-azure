@@ -1,10 +1,40 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { AzureFsConfigFile, CliOptions, ResolvedConfig } from "../types/config.types";
+import {
+  AzureFsConfigFile,
+  CliOptions,
+  ResolvedConfig,
+  ConfigSourceLabel,
+  ConfigSourceTracker,
+} from "../types/config.types";
 import { ApiResolvedConfig } from "../types/api-config.types";
 import { ConfigError } from "../errors/config.error";
 import { validateConfig, validateApiConfig } from "./config.schema";
+
+/**
+ * Create a ConfigSourceTracker instance.
+ * Wraps a Map<string, ConfigSourceLabel> with the ConfigSourceTracker interface.
+ */
+function createSourceTracker(): ConfigSourceTracker {
+  const sources = new Map<string, ConfigSourceLabel>();
+
+  return {
+    set(key: string, source: ConfigSourceLabel): void {
+      sources.set(key, source);
+    },
+    getSource(key: string): ConfigSourceLabel | undefined {
+      return sources.get(key);
+    },
+    getAllSources(): Record<string, ConfigSourceLabel> {
+      const result: Record<string, ConfigSourceLabel> = {};
+      sources.forEach((value, key) => {
+        result[key] = value;
+      });
+      return result;
+    },
+  };
+}
 
 /**
  * Load the configuration file from disk.
@@ -55,11 +85,27 @@ function loadConfigFile(configPath?: string): AzureFsConfigFile {
 }
 
 /**
- * Load configuration from environment variables.
- * Returns a partial config object with only the values that are set in the environment.
+ * Result of loading environment variables: the config values + a reverse map from
+ * config property keys to their originating env var names (for source tracking in dev routes).
  */
-function loadEnvConfig(): Record<string, Record<string, unknown>> {
-  const env: Record<string, Record<string, unknown>> = {
+interface EnvConfigResult {
+  values: Record<string, Record<string, unknown>>;
+  envVarNames: Record<string, Record<string, string>>;
+}
+
+/**
+ * Load configuration from environment variables.
+ * Returns config values and env-var-name mappings for each section.
+ */
+function loadEnvConfig(): EnvConfigResult {
+  const values: Record<string, Record<string, unknown>> = {
+    storage: {},
+    logging: {},
+    retry: {},
+    batch: {},
+    api: {},
+  };
+  const envVarNames: Record<string, Record<string, string>> = {
     storage: {},
     logging: {},
     retry: {},
@@ -67,64 +113,87 @@ function loadEnvConfig(): Record<string, Record<string, unknown>> {
     api: {},
   };
 
+  // Helper: set value and record env var name
+  function setEnv(section: string, key: string, value: unknown, envVar: string): void {
+    values[section][key] = value;
+    envVarNames[section][key] = envVar;
+  }
+
   if (process.env.AZURE_STORAGE_ACCOUNT_URL) {
-    env["storage"]["accountUrl"] = process.env.AZURE_STORAGE_ACCOUNT_URL;
+    setEnv("storage", "accountUrl", process.env.AZURE_STORAGE_ACCOUNT_URL, "AZURE_STORAGE_ACCOUNT_URL");
   }
   if (process.env.AZURE_STORAGE_CONTAINER_NAME) {
-    env["storage"]["containerName"] = process.env.AZURE_STORAGE_CONTAINER_NAME;
+    setEnv("storage", "containerName", process.env.AZURE_STORAGE_CONTAINER_NAME, "AZURE_STORAGE_CONTAINER_NAME");
   }
   if (process.env.AZURE_FS_AUTH_METHOD) {
-    env["storage"]["authMethod"] = process.env.AZURE_FS_AUTH_METHOD;
+    setEnv("storage", "authMethod", process.env.AZURE_FS_AUTH_METHOD, "AZURE_FS_AUTH_METHOD");
   }
   if (process.env.AZURE_STORAGE_SAS_TOKEN_EXPIRY) {
-    env["storage"]["sasTokenExpiry"] = process.env.AZURE_STORAGE_SAS_TOKEN_EXPIRY;
+    setEnv("storage", "sasTokenExpiry", process.env.AZURE_STORAGE_SAS_TOKEN_EXPIRY, "AZURE_STORAGE_SAS_TOKEN_EXPIRY");
   }
   if (process.env.AZURE_FS_LOG_LEVEL) {
-    env["logging"]["level"] = process.env.AZURE_FS_LOG_LEVEL;
+    setEnv("logging", "level", process.env.AZURE_FS_LOG_LEVEL, "AZURE_FS_LOG_LEVEL");
   }
   if (process.env.AZURE_FS_LOG_REQUESTS !== undefined && process.env.AZURE_FS_LOG_REQUESTS !== "") {
-    env["logging"]["logRequests"] = process.env.AZURE_FS_LOG_REQUESTS === "true";
+    setEnv("logging", "logRequests", process.env.AZURE_FS_LOG_REQUESTS === "true", "AZURE_FS_LOG_REQUESTS");
   }
   if (process.env.AZURE_FS_RETRY_STRATEGY) {
-    env["retry"]["strategy"] = process.env.AZURE_FS_RETRY_STRATEGY;
+    setEnv("retry", "strategy", process.env.AZURE_FS_RETRY_STRATEGY, "AZURE_FS_RETRY_STRATEGY");
   }
   if (process.env.AZURE_FS_RETRY_MAX_RETRIES) {
-    env["retry"]["maxRetries"] = Number(process.env.AZURE_FS_RETRY_MAX_RETRIES);
+    setEnv("retry", "maxRetries", Number(process.env.AZURE_FS_RETRY_MAX_RETRIES), "AZURE_FS_RETRY_MAX_RETRIES");
   }
   if (process.env.AZURE_FS_RETRY_INITIAL_DELAY_MS) {
-    env["retry"]["initialDelayMs"] = Number(process.env.AZURE_FS_RETRY_INITIAL_DELAY_MS);
+    setEnv("retry", "initialDelayMs", Number(process.env.AZURE_FS_RETRY_INITIAL_DELAY_MS), "AZURE_FS_RETRY_INITIAL_DELAY_MS");
   }
   if (process.env.AZURE_FS_RETRY_MAX_DELAY_MS) {
-    env["retry"]["maxDelayMs"] = Number(process.env.AZURE_FS_RETRY_MAX_DELAY_MS);
+    setEnv("retry", "maxDelayMs", Number(process.env.AZURE_FS_RETRY_MAX_DELAY_MS), "AZURE_FS_RETRY_MAX_DELAY_MS");
   }
   if (process.env.AZURE_FS_BATCH_CONCURRENCY) {
-    env["batch"]["concurrency"] = Number(process.env.AZURE_FS_BATCH_CONCURRENCY);
+    setEnv("batch", "concurrency", Number(process.env.AZURE_FS_BATCH_CONCURRENCY), "AZURE_FS_BATCH_CONCURRENCY");
   }
 
   // --- API-specific environment variables ---
   if (process.env.AZURE_FS_API_PORT) {
-    env["api"]["port"] = Number(process.env.AZURE_FS_API_PORT);
+    setEnv("api", "port", Number(process.env.AZURE_FS_API_PORT), "AZURE_FS_API_PORT");
   }
   if (process.env.AZURE_FS_API_HOST) {
-    env["api"]["host"] = process.env.AZURE_FS_API_HOST;
+    setEnv("api", "host", process.env.AZURE_FS_API_HOST, "AZURE_FS_API_HOST");
   }
   if (process.env.AZURE_FS_API_CORS_ORIGINS) {
-    env["api"]["corsOrigins"] = process.env.AZURE_FS_API_CORS_ORIGINS
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    setEnv("api", "corsOrigins", process.env.AZURE_FS_API_CORS_ORIGINS.split(",").map((s) => s.trim()).filter((s) => s.length > 0), "AZURE_FS_API_CORS_ORIGINS");
   }
   if (process.env.AZURE_FS_API_SWAGGER_ENABLED !== undefined && process.env.AZURE_FS_API_SWAGGER_ENABLED !== "") {
-    env["api"]["swaggerEnabled"] = process.env.AZURE_FS_API_SWAGGER_ENABLED === "true";
+    setEnv("api", "swaggerEnabled", process.env.AZURE_FS_API_SWAGGER_ENABLED === "true", "AZURE_FS_API_SWAGGER_ENABLED");
   }
   if (process.env.AZURE_FS_API_UPLOAD_MAX_SIZE_MB) {
-    env["api"]["uploadMaxSizeMb"] = Number(process.env.AZURE_FS_API_UPLOAD_MAX_SIZE_MB);
+    setEnv("api", "uploadMaxSizeMb", Number(process.env.AZURE_FS_API_UPLOAD_MAX_SIZE_MB), "AZURE_FS_API_UPLOAD_MAX_SIZE_MB");
   }
   if (process.env.AZURE_FS_API_REQUEST_TIMEOUT_MS) {
-    env["api"]["requestTimeoutMs"] = Number(process.env.AZURE_FS_API_REQUEST_TIMEOUT_MS);
+    setEnv("api", "requestTimeoutMs", Number(process.env.AZURE_FS_API_REQUEST_TIMEOUT_MS), "AZURE_FS_API_REQUEST_TIMEOUT_MS");
   }
 
-  return env;
+  // NODE_ENV: standard Node.js convention, no AZURE_FS_ prefix
+  if (process.env.NODE_ENV) {
+    setEnv("api", "nodeEnv", process.env.NODE_ENV, "NODE_ENV");
+  }
+
+  // AUTO_SELECT_PORT: standard utility pattern, no AZURE_FS_ prefix
+  if (process.env.AUTO_SELECT_PORT !== undefined && process.env.AUTO_SELECT_PORT !== "") {
+    setEnv("api", "autoSelectPort", process.env.AUTO_SELECT_PORT === "true", "AUTO_SELECT_PORT");
+  }
+
+  // AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS: comma-separated list of additional Swagger server URLs
+  if (process.env.AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS) {
+    setEnv("api", "swaggerAdditionalServers", process.env.AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS.split(",").map((s) => s.trim()).filter((s) => s.length > 0), "AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS");
+  }
+
+  // AZURE_FS_API_SWAGGER_SERVER_VARIABLES: enable Swagger server variables
+  if (process.env.AZURE_FS_API_SWAGGER_SERVER_VARIABLES !== undefined && process.env.AZURE_FS_API_SWAGGER_SERVER_VARIABLES !== "") {
+    setEnv("api", "swaggerServerVariables", process.env.AZURE_FS_API_SWAGGER_SERVER_VARIABLES === "true", "AZURE_FS_API_SWAGGER_SERVER_VARIABLES");
+  }
+
+  return { values, envVarNames };
 }
 
 /**
@@ -154,60 +223,88 @@ function loadCliConfig(cliOptions: CliOptions): Record<string, Record<string, un
 }
 
 /**
- * Deep-merge configuration objects. Later sources override earlier ones.
- * Only non-undefined values from the override are applied.
+ * Source-labeled override entry for tracked merging.
+ */
+interface SourcedOverride {
+  values: Record<string, unknown>;
+  source: ConfigSourceLabel;
+  /** Maps config property keys to their originating env var names (for reverse lookup by dev routes). */
+  envVarNames?: Record<string, string>;
+}
+
+/**
+ * Deep-merge configuration objects with optional source tracking.
+ * Later sources override earlier ones. Only non-undefined values from overrides are applied.
+ *
+ * When a tracker is provided, each "winning" key is recorded with its source label
+ * using the sectionPrefix for namespacing (e.g., "storage.accountUrl").
  */
 function mergeConfigSection(
   base: Record<string, unknown>,
-  ...overrides: Record<string, unknown>[]
+  overrides: SourcedOverride[],
+  tracker?: ConfigSourceTracker,
+  sectionPrefix?: string,
 ): Record<string, unknown> {
   const result = { ...base };
-  for (const override of overrides) {
-    for (const key of Object.keys(override)) {
-      if (override[key] !== undefined) {
-        result[key] = override[key];
+
+  // Track keys that came from the base (config file)
+  if (tracker && sectionPrefix) {
+    for (const key of Object.keys(base)) {
+      if (base[key] !== undefined) {
+        tracker.set(`${sectionPrefix}.${key}`, "config-file");
       }
     }
   }
+
+  for (const override of overrides) {
+    for (const key of Object.keys(override.values)) {
+      if (override.values[key] !== undefined) {
+        result[key] = override.values[key];
+        if (tracker && sectionPrefix) {
+          tracker.set(`${sectionPrefix}.${key}`, override.source);
+          // Also track by env var name for reverse lookup by dev routes
+          if (override.envVarNames && override.envVarNames[key]) {
+            tracker.set(override.envVarNames[key], override.source);
+          }
+        }
+      }
+    }
+  }
+
   return result;
 }
 
 /**
  * Build the merged configuration from all sources (file, env, CLI).
  * Does NOT validate -- returns the raw merged object.
+ *
+ * When a tracker is provided, each config key is recorded with the source
+ * that provided its final value.
  */
-function buildMergedConfig(cliOptions: CliOptions): Record<string, unknown> {
+function buildMergedConfig(
+  cliOptions: CliOptions,
+  tracker?: ConfigSourceTracker,
+): Record<string, unknown> {
   const fileConfig = loadConfigFile(cliOptions.config);
-  const envConfig = loadEnvConfig();
+  const envResult = loadEnvConfig();
   const cliConfig = loadCliConfig(cliOptions);
 
-  return {
-    storage: mergeConfigSection(
-      (fileConfig.storage as Record<string, unknown>) || {},
-      envConfig["storage"],
-      cliConfig["storage"],
-    ),
-    logging: mergeConfigSection(
-      (fileConfig.logging as Record<string, unknown>) || {},
-      envConfig["logging"],
-      cliConfig["logging"],
-    ),
-    retry: mergeConfigSection(
-      (fileConfig.retry as Record<string, unknown>) || {},
-      envConfig["retry"],
-      cliConfig["retry"],
-    ),
-    batch: mergeConfigSection(
-      (fileConfig.batch as Record<string, unknown>) || {},
-      envConfig["batch"],
-      cliConfig["batch"],
-    ),
-    api: mergeConfigSection(
-      (fileConfig.api as Record<string, unknown>) || {},
-      envConfig["api"],
-      cliConfig["api"],
-    ),
-  };
+  const sections = ["storage", "logging", "retry", "batch", "api"] as const;
+  const merged: Record<string, unknown> = {};
+
+  for (const section of sections) {
+    merged[section] = mergeConfigSection(
+      (fileConfig[section] as Record<string, unknown>) || {},
+      [
+        { values: envResult.values[section], source: "environment-variable", envVarNames: envResult.envVarNames[section] },
+        { values: cliConfig[section], source: "cli-flag" },
+      ],
+      tracker,
+      section,
+    );
+  }
+
+  return merged;
 }
 
 /**
@@ -216,6 +313,7 @@ function buildMergedConfig(cliOptions: CliOptions): Record<string, unknown> {
  *
  * Throws ConfigError if any required field is missing (no fallback/default values).
  * NOTE: The `api` section is NOT validated here -- it is optional for CLI commands.
+ * NOTE: No source tracking for CLI commands (performance optimization).
  */
 export function loadConfig(cliOptions: CliOptions): ResolvedConfig {
   const merged = buildMergedConfig(cliOptions);
@@ -244,13 +342,17 @@ export function resolveConfig(globalOptions: Record<string, unknown>): ResolvedC
 /**
  * Resolve configuration for the API server.
  * Validates BOTH the base config AND the API section.
- * All six API parameters are required -- missing values throw ConfigError.
+ * All API parameters are required -- missing values throw ConfigError.
  *
- * Returns ApiResolvedConfig with a required `api` section.
+ * Creates a ConfigSourceTracker to record which source provided each config value.
+ * The tracker is attached to the returned ApiResolvedConfig for use by dev routes.
+ *
+ * Returns ApiResolvedConfig with a required `api` section and optional `sourceTracker`.
  */
 export function resolveApiConfig(cliOptions?: CliOptions): ApiResolvedConfig {
   const opts = cliOptions || {};
-  const merged = buildMergedConfig(opts);
+  const tracker = createSourceTracker();
+  const merged = buildMergedConfig(opts, tracker);
 
   // 1. Validate base config
   const baseConfig = validateConfig(merged);
@@ -262,6 +364,7 @@ export function resolveApiConfig(cliOptions?: CliOptions): ApiResolvedConfig {
   return {
     ...baseConfig,
     api: apiConfig,
+    sourceTracker: tracker,
   };
 }
 

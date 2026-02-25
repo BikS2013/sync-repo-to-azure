@@ -1348,3 +1348,178 @@ Append:
 | F11.8 | Tag operations via REST |
 | F11.11 | Swagger/OpenAPI documentation |
 | F11.12 | Request logging and timeout |
+
+---
+
+## 12. API Server Enhancement Features
+
+### F12.1 NODE_ENV Support (P0)
+
+**Description**: Add `NODE_ENV` as a required configuration parameter for the API server, controlling environment-specific behaviors.
+
+**Inputs**:
+- `NODE_ENV` environment variable or `api.nodeEnv` in config file
+- Valid values: `development`, `production`, `test`
+
+**Outputs**:
+- `nodeEnv` field available on `ApiConfig` interface
+
+**Behavior**:
+- Required when starting the API server (throw `ConfigError` if missing)
+- Controls error response detail: stack traces included only in `development` mode
+- Controls Swagger server description: "Production server" vs "Development server"
+- Gates development-only routes (F12.5)
+- CLI commands are NOT affected (not validated for CLI)
+
+**Edge cases**:
+- Missing value -- `ConfigError` with remediation guidance
+- Invalid value (e.g., `staging`) -- `ConfigError` with valid options list
+- Not prefixed with `AZURE_FS_` because it is a standard Node.js convention
+
+---
+
+### F12.2 Config Source Tracking (P1)
+
+**Description**: Track which configuration source (config file, environment variable, or CLI flag) provided each resolved configuration value.
+
+**Inputs**:
+- The three-layer config merge process (config file, env vars, CLI flags)
+
+**Outputs**:
+- `ConfigSourceTracker` object attached to `ApiResolvedConfig`
+- Each tracked key maps to one of: `config-file`, `environment-variable`, `cli-flag`
+
+**Behavior**:
+- During config merge, record which source "won" for each key
+- Only the winning source is recorded (highest priority that provided a value)
+- Keys are tracked with dot notation (e.g., `storage.accountUrl`, `api.port`)
+- Only active for API server path (`resolveApiConfig()`); CLI path (`resolveConfig()`) is unaffected
+- Consumed by development routes (F12.5) to display source audit trail
+
+**Edge cases**:
+- Key provided by multiple sources -- only the highest-priority source is recorded
+- Key not provided by any source -- not tracked (validation will throw before tracking matters)
+- OS-level env vars (PATH, HOME) -- not tracked, shown as `system` in dev routes
+
+---
+
+### F12.3 Container-Aware Swagger URLs (P1)
+
+**Description**: Enhance Swagger/OpenAPI specification generation to auto-detect runtime environments (Azure App Service, Kubernetes, Docker) and generate correct server URLs.
+
+**Inputs**:
+- Auto-detected env vars: `WEBSITE_HOSTNAME`, `WEBSITE_SITE_NAME`, `K8S_SERVICE_HOST`, `K8S_SERVICE_PORT`, `DOCKER_HOST_URL`
+- User overrides: `PUBLIC_URL`, `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS`, `AZURE_FS_API_SWAGGER_SERVER_VARIABLES`
+- Optional `actualPort` when port was auto-selected (F12.4)
+
+**Outputs**:
+- Swagger spec `servers` array with environment-appropriate URL(s)
+- Optional server variables for interactive URL editing in Swagger UI
+- Optional additional server entries
+
+**Behavior**:
+- Detection priority chain: Azure App Service > PUBLIC_URL > Kubernetes > Docker > local development
+- All detection env vars are optional (not validated in config schema)
+- `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS`: comma-separated URLs added as extra server entries
+- `AZURE_FS_API_SWAGGER_SERVER_VARIABLES=true`: adds protocol/host/port variables to Swagger UI
+- When `actualPort` differs from configured port, Swagger URL uses the actual port
+
+**Edge cases**:
+- No container env vars set -- falls back to `http://{host}:{port}` (correct local behavior, not a "fallback" violation)
+- Multiple detection vars set -- priority chain determines winner
+- Azure App Service always uses HTTPS when `WEBSITE_SITE_NAME` is present
+
+---
+
+### F12.4 PortChecker Utility (P0)
+
+**Description**: Proactive port availability check before the Express server attempts to listen, with optional auto-selection of the next available port.
+
+**Inputs**:
+- `AUTO_SELECT_PORT` environment variable or `api.autoSelectPort` in config file (required, `true`/`false`)
+- Configured `api.port` and `api.host`
+
+**Outputs**:
+- If port available: server starts normally
+- If port occupied and `AUTO_SELECT_PORT=true`: auto-selects next available port, logs the change
+- If port occupied and `AUTO_SELECT_PORT=false`: exits with error identifying the process using the port
+
+**Behavior**:
+- `PortChecker.isPortAvailable()`: TCP probe to check if port can be bound
+- `PortChecker.findAvailablePort()`: scans sequentially from startPort, max 10 attempts
+- `PortChecker.getProcessUsingPort()`: uses `lsof` to identify occupying process (macOS/Linux only)
+- Existing `server.on("error")` handler kept as safety net against race conditions
+- When auto-selecting, the Express app is created with the actual port so Swagger URLs are correct
+
+**Edge cases**:
+- Race condition: port becomes occupied between check and listen -- safety net handler catches `EADDRINUSE`
+- All 10 scanned ports occupied -- exit with error listing the range checked
+- `lsof` not available (Windows) -- `getProcessUsingPort()` returns `null`, informational only
+- `AUTO_SELECT_PORT` not set -- `ConfigError` (required parameter, no fallback)
+
+---
+
+### F12.5 Development Routes (P1)
+
+**Description**: Development-only API endpoints for inspecting environment variables and configuration sources.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/dev/env` | List all environment variables with sources and masking |
+| `GET` | `/api/dev/env/:key` | Get a specific environment variable |
+
+**Inputs**:
+- `NODE_ENV=development` (routes only mounted in development mode)
+- `ConfigSourceTracker` from config loading (optional, enhances source display)
+
+**Outputs**:
+
+`GET /api/dev/env`:
+```json
+{
+  "success": true,
+  "data": {
+    "environment": "development",
+    "totalVariables": 45,
+    "variables": [
+      { "name": "AZURE_FS_API_PORT", "value": "3000", "source": "environment-variable", "masked": false }
+    ],
+    "sources": { "config-file": 5, "environment-variable": 12, "system": 28 }
+  },
+  "metadata": { "timestamp": "2026-02-23T10:00:00Z" }
+}
+```
+
+**Behavior**:
+- Two layers of security: routes NOT mounted when `NODE_ENV !== "development"` + handlers return 403 as defense in depth
+- All `process.env` keys listed, sorted alphabetically
+- Sensitive keys (containing SECRET, PASSWORD, TOKEN, KEY, PRIVATE, CREDENTIAL) have values masked as `***MASKED***`
+- Source labels: `config-file`, `environment-variable`, `cli-flag` for tracked keys; `system` for OS-level vars
+- Responses use the project's standard envelope format
+
+**Edge cases**:
+- `NODE_ENV=production` -- routes not mounted (404); handler also returns 403 (belt and suspenders)
+- Requested key does not exist -- 404 with key name
+- Key is case-insensitive -- normalized to uppercase before lookup
+- No `ConfigSourceTracker` available -- all sources show as `system`
+
+---
+
+## 12.1 API Enhancement Feature Summary by Priority
+
+### P0 -- Must-Have
+
+| ID | Feature |
+|----|---------|
+| F12.1 | NODE_ENV support (environment mode control) |
+| F12.4 | PortChecker utility (proactive port conflict resolution) |
+
+### P1 -- Important
+
+| ID | Feature |
+|----|---------|
+| F12.2 | Config source tracking (audit trail for config values) |
+| F12.3 | Container-aware Swagger URLs (cloud deployment support) |
+| F12.5 | Development routes (config debugging endpoints) |

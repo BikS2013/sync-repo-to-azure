@@ -1,10 +1,11 @@
 import { AuthMethod, LogLevel, ResolvedConfig, RetryStrategy } from "../types/config.types";
-import { ApiConfig } from "../types/api-config.types";
+import { ApiConfig, NodeEnvironment } from "../types/api-config.types";
 import { ConfigError } from "../errors/config.error";
 
 const VALID_AUTH_METHODS: AuthMethod[] = ["connection-string", "sas-token", "azure-ad"];
 const VALID_LOG_LEVELS: LogLevel[] = ["debug", "info", "warn", "error"];
 const VALID_RETRY_STRATEGIES: RetryStrategy[] = ["none", "exponential", "fixed"];
+const VALID_NODE_ENVIRONMENTS: NodeEnvironment[] = ["development", "production", "test"];
 
 /**
  * Validates that a merged configuration object has all required fields.
@@ -352,12 +353,91 @@ export function validateApiConfig(api: Record<string, unknown>): ApiConfig {
     );
   }
 
-  return {
+  // --- nodeEnv (required) ---
+  if (api["nodeEnv"] === undefined || api["nodeEnv"] === null || api["nodeEnv"] === "") {
+    throw ConfigError.missingRequired(
+      "api.nodeEnv",
+      "(not available as CLI flag, use env var or config file)",
+      "export NODE_ENV=development",
+      '{ "api": { "nodeEnv": "development" } }',
+    );
+  }
+
+  const nodeEnv = String(api["nodeEnv"]);
+  if (!VALID_NODE_ENVIRONMENTS.includes(nodeEnv as NodeEnvironment)) {
+    throw ConfigError.invalidValue("api.nodeEnv", nodeEnv, VALID_NODE_ENVIRONMENTS);
+  }
+
+  // --- autoSelectPort (required) ---
+  if (api["autoSelectPort"] === undefined || api["autoSelectPort"] === null) {
+    throw ConfigError.missingRequired(
+      "api.autoSelectPort",
+      "(not available as CLI flag, use env var or config file)",
+      "export AUTO_SELECT_PORT=false",
+      '{ "api": { "autoSelectPort": false } }',
+    );
+  }
+
+  if (typeof api["autoSelectPort"] !== "boolean") {
+    throw ConfigError.invalidValue(
+      "api.autoSelectPort",
+      api["autoSelectPort"],
+      ["true", "false"],
+    );
+  }
+
+  const autoSelectPort = api["autoSelectPort"] as boolean;
+
+  // --- swaggerAdditionalServers (optional) ---
+  let swaggerAdditionalServers: string[] | undefined;
+  if (api["swaggerAdditionalServers"] !== undefined && api["swaggerAdditionalServers"] !== null) {
+    if (typeof api["swaggerAdditionalServers"] === "string") {
+      swaggerAdditionalServers = api["swaggerAdditionalServers"]
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    } else if (Array.isArray(api["swaggerAdditionalServers"])) {
+      swaggerAdditionalServers = api["swaggerAdditionalServers"] as string[];
+    } else {
+      throw ConfigError.invalidValue(
+        "api.swaggerAdditionalServers",
+        api["swaggerAdditionalServers"],
+        ["comma-separated string or string array"],
+      );
+    }
+  }
+
+  // --- swaggerServerVariables (optional) ---
+  let swaggerServerVariables: boolean | undefined;
+  if (api["swaggerServerVariables"] !== undefined && api["swaggerServerVariables"] !== null) {
+    if (typeof api["swaggerServerVariables"] !== "boolean") {
+      throw ConfigError.invalidValue(
+        "api.swaggerServerVariables",
+        api["swaggerServerVariables"],
+        ["true", "false"],
+      );
+    }
+    swaggerServerVariables = api["swaggerServerVariables"] as boolean;
+  }
+
+  const result: ApiConfig = {
     port,
     host,
     corsOrigins,
     swaggerEnabled,
     uploadMaxSizeMb,
     requestTimeoutMs,
+    nodeEnv: nodeEnv as NodeEnvironment,
+    autoSelectPort,
   };
+
+  if (swaggerAdditionalServers !== undefined) {
+    result.swaggerAdditionalServers = swaggerAdditionalServers;
+  }
+
+  if (swaggerServerVariables !== undefined) {
+    result.swaggerServerVariables = swaggerServerVariables;
+  }
+
+  return result;
 }

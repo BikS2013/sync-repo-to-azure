@@ -76,8 +76,14 @@ function getSanitizedMessage(err: AzureFsError): string | null {
  * Maps AzureFsError subclasses to HTTP status codes.
  * Handles MulterError for upload failures.
  * Returns a generic 500 for unknown errors (no internal details leaked).
+ *
+ * When nodeEnv is "development", unknown error responses include the stack trace
+ * to aid debugging. In production and test modes, stack traces are never sent.
+ *
+ * @param logger - The application logger instance.
+ * @param nodeEnv - The current NODE_ENV value (controls stack trace inclusion).
  */
-export function createErrorHandlerMiddleware(logger: Logger) {
+export function createErrorHandlerMiddleware(logger: Logger, nodeEnv: string) {
   return function errorHandlerMiddleware(
     err: unknown,
     _req: Request,
@@ -146,6 +152,7 @@ export function createErrorHandlerMiddleware(logger: Logger) {
       error: {
         code: "INTERNAL_ERROR",
         message: "An internal server error occurred.",
+        ...(nodeEnv === "development" && errorStack ? { stack: errorStack } : {}),
       },
       metadata: { timestamp },
     });

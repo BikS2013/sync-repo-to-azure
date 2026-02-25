@@ -20,6 +20,25 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 export type RetryStrategy = "none" | "exponential" | "fixed";
 
 /**
+ * Labels identifying where a configuration value originated.
+ */
+export type ConfigSourceLabel = "config-file" | "environment-variable" | "cli-flag";
+
+/**
+ * Tracks the source of each resolved configuration key.
+ * Used by the API server to provide an audit trail of where each
+ * config value came from (consumed by development routes).
+ */
+export interface ConfigSourceTracker {
+  /** Record the source of a config key */
+  set(key: string, source: ConfigSourceLabel): void;
+  /** Get the source of a specific config key */
+  getSource(key: string): ConfigSourceLabel | undefined;
+  /** Get all tracked sources as a plain record */
+  getAllSources(): Record<string, ConfigSourceLabel>;
+}
+
+/**
  * The structure of the .azure-fs.json configuration file.
  * All fields are optional in the file because they can be provided
  * via environment variables or CLI flags.
@@ -51,6 +70,10 @@ export interface AzureFsConfigFile {
     swaggerEnabled?: boolean;
     uploadMaxSizeMb?: number;
     requestTimeoutMs?: number;
+    nodeEnv?: string;
+    autoSelectPort?: boolean;
+    swaggerAdditionalServers?: string[];
+    swaggerServerVariables?: boolean;
   };
 }
 
