@@ -15,6 +15,7 @@ export function createFolderRoutes(blobService: BlobFileSystemService): Router {
    * @openapi
    * /api/v1/folders/{path}:
    *   get:
+   *     operationId: listFolder
    *     summary: List folder contents
    *     tags: [Folders]
    *     parameters:
@@ -71,6 +72,7 @@ export function createFolderRoutes(blobService: BlobFileSystemService): Router {
    *                           path:
    *                             type: string
    *   post:
+   *     operationId: createFolder
    *     summary: Create a virtual folder
    *     tags: [Folders]
    *     parameters:
@@ -98,6 +100,7 @@ export function createFolderRoutes(blobService: BlobFileSystemService): Router {
    *                     created:
    *                       type: boolean
    *   delete:
+   *     operationId: deleteFolder
    *     summary: Delete a folder and all its contents
    *     tags: [Folders]
    *     parameters:
@@ -125,6 +128,7 @@ export function createFolderRoutes(blobService: BlobFileSystemService): Router {
    *                     deletedCount:
    *                       type: integer
    *   head:
+   *     operationId: checkFolderExists
    *     summary: Check if a folder exists
    *     tags: [Folders]
    *     parameters:

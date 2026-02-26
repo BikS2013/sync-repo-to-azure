@@ -23,6 +23,7 @@ export function createHotkeyRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/hotkeys/clear:
    *   post:
+   *     operationId: clearConsole
    *     summary: Clear console output
    *     description: |
    *       Clears the server console output (equivalent to the 'c' hotkey).
@@ -57,6 +58,7 @@ export function createHotkeyRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/hotkeys/freeze:
    *   post:
+   *     operationId: toggleFreeze
    *     summary: Toggle freeze/unfreeze log output
    *     description: |
    *       Toggles freezing of console log output (equivalent to the 'f' hotkey).
@@ -92,6 +94,7 @@ export function createHotkeyRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/hotkeys/verbose:
    *   post:
+   *     operationId: toggleVerbose
    *     summary: Toggle verbose mode
    *     description: |
    *       Toggles verbose mode by switching AZURE_FS_LOG_LEVEL between
@@ -127,6 +130,7 @@ export function createHotkeyRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/hotkeys/config:
    *   get:
+   *     operationId: inspectConfig
    *     summary: Inspect resolved configuration
    *     description: |
    *       Returns the resolved configuration with sensitive values masked
@@ -162,6 +166,7 @@ export function createHotkeyRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/hotkeys/status:
    *   get:
+   *     operationId: getHotkeyStatus
    *     summary: Get current hotkey state
    *     description: |
    *       Returns the current state of freeze and verbose modes.
@@ -195,6 +200,7 @@ export function createHotkeyRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/hotkeys/help:
    *   get:
+   *     operationId: getHotkeyHelp
    *     summary: Get available hotkeys and descriptions
    *     description: |
    *       Returns the list of all available console hotkeys with their

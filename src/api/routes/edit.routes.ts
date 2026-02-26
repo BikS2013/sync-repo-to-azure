@@ -21,6 +21,7 @@ export function createEditRoutes(
    * @openapi
    * /api/v1/edit/patch/{path}:
    *   patch:
+   *     operationId: patchFile
    *     summary: Apply find-replace patches to blob content
    *     tags: [Edit]
    *     parameters:
@@ -102,6 +103,7 @@ export function createEditRoutes(
    * @openapi
    * /api/v1/edit/append/{path}:
    *   patch:
+   *     operationId: appendToFile
    *     summary: Append or prepend content to a blob
    *     tags: [Edit]
    *     parameters:
@@ -172,6 +174,7 @@ export function createEditRoutes(
    * @openapi
    * /api/v1/edit/download/{path}:
    *   post:
+   *     operationId: editDownload
    *     summary: Download blob for editing (Phase 1 of edit workflow)
    *     tags: [Edit]
    *     description: Downloads the blob to a temp file and returns the path and ETag. Use the ETag with the upload endpoint to complete the edit.
@@ -218,6 +221,7 @@ export function createEditRoutes(
    * @openapi
    * /api/v1/edit/upload/{path}:
    *   put:
+   *     operationId: editUpload
    *     summary: Re-upload edited file (Phase 2 of edit workflow)
    *     tags: [Edit]
    *     description: Re-uploads the edited file with ETag concurrency check. Use the ETag from the download response as the If-Match header.

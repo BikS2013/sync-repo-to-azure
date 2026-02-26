@@ -21,6 +21,7 @@ export function createFileRoutes(
    * @openapi
    * /api/v1/files:
    *   post:
+   *     operationId: uploadFile
    *     summary: Upload a new file
    *     tags: [Files]
    *     requestBody:
@@ -77,6 +78,7 @@ export function createFileRoutes(
    * @openapi
    * /api/v1/files/info/{path}:
    *   get:
+   *     operationId: getFileInfo
    *     summary: Get file properties, metadata, and tags
    *     tags: [Files]
    *     parameters:
@@ -128,6 +130,7 @@ export function createFileRoutes(
    * @openapi
    * /api/v1/files/{path}:
    *   get:
+   *     operationId: downloadFile
    *     summary: Download a file
    *     tags: [Files]
    *     parameters:
@@ -158,6 +161,7 @@ export function createFileRoutes(
    *       404:
    *         description: Blob not found
    *   head:
+   *     operationId: checkFileExists
    *     summary: Check if a file exists
    *     tags: [Files]
    *     parameters:
@@ -177,6 +181,7 @@ export function createFileRoutes(
    *       404:
    *         description: File does not exist
    *   delete:
+   *     operationId: deleteFile
    *     summary: Delete a file
    *     tags: [Files]
    *     parameters:
@@ -212,6 +217,7 @@ export function createFileRoutes(
    *       404:
    *         description: Blob not found
    *   put:
+   *     operationId: replaceFile
    *     summary: Replace an existing file
    *     tags: [Files]
    *     parameters:

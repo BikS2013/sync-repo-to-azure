@@ -2,6 +2,15 @@
 
 ## Pending
 
+### P1 - Root Folder Listing Fails on Azure App Service
+
+**Detected**: 2026-02-26
+**Location**: `src/api/routes/folder.routes.ts` -- `GET /api/v1/folders/*path`
+
+**Description**: Listing the root folder (`/`) works locally and in Docker via `GET /api/v1/folders/%2F`, but fails on Azure App Service. App Service's reverse proxy (IIS/Kestrel) decodes `%2F` to `/` before the request reaches Express, collapsing the path to `/api/v1/folders/` which matches no route (the `/*path` pattern requires at least one segment). Workaround: list known top-level folders individually. Fix options: (a) add a dedicated `GET /api/v1/folders` route (no path param) that lists the container root, or (b) use double-encoding `%252F`.
+
+---
+
 ### P2 - Swagger Priority Order Deviation from Plan (DOCUMENTED)
 
 **Detected**: 2026-02-23 (code review of Plan 005 features)

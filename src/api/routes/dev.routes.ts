@@ -20,6 +20,7 @@ export function createDevRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/env:
    *   get:
+   *     operationId: listEnvVars
    *     summary: List all environment variables
    *     description: |
    *       Returns all environment variables sorted alphabetically with their
@@ -66,6 +67,7 @@ export function createDevRoutes(services: ApiServices): Router {
    * @openapi
    * /api/dev/env/{key}:
    *   get:
+   *     operationId: getEnvVar
    *     summary: Get a specific environment variable
    *     description: |
    *       Returns the value and source of a specific environment variable.

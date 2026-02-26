@@ -1,7 +1,7 @@
 # ============================================================
 # Stage 1: Builder - Compile TypeScript to JavaScript
 # ============================================================
-FROM node:20-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -23,9 +23,12 @@ RUN npm run build
 # ============================================================
 FROM node:20-alpine AS production
 
-# Add labels for image identification
+# Add labels for image identification (OCI standard labels)
 LABEL maintainer="azure-fs"
 LABEL description="Azure Blob Storage File System REST API"
+LABEL org.opencontainers.image.title="azure-fs-api"
+LABEL org.opencontainers.image.description="REST API for Azure Blob Storage virtual file system"
+LABEL org.opencontainers.image.source="https://github.com/azure-fs"
 
 WORKDIR /app
 

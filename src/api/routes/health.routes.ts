@@ -17,6 +17,7 @@ export function createHealthRoutes(config: ResolvedConfig): Router {
    * @openapi
    * /api/health:
    *   get:
+   *     operationId: checkHealth
    *     summary: Liveness check
    *     description: Confirms the process is running and can handle HTTP requests. Always returns 200 if the server is alive.
    *     tags:
@@ -53,6 +54,7 @@ export function createHealthRoutes(config: ResolvedConfig): Router {
    * @openapi
    * /api/health/ready:
    *   get:
+   *     operationId: checkReadiness
    *     summary: Readiness check
    *     description: Verifies connectivity to Azure Blob Storage. Returns 200 if the storage account is reachable and the container exists, 503 otherwise.
    *     tags:

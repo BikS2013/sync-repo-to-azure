@@ -15,6 +15,7 @@ export function createTagRoutes(metadataService: MetadataService): Router {
    * @openapi
    * /api/v1/tags:
    *   get:
+   *     operationId: queryByTags
    *     summary: Query blobs by tag filter expression
    *     tags: [Tags]
    *     parameters:
@@ -57,6 +58,7 @@ export function createTagRoutes(metadataService: MetadataService): Router {
    * @openapi
    * /api/v1/tags/{path}:
    *   get:
+   *     operationId: getTags
    *     summary: Get all tags for a blob
    *     tags: [Tags]
    *     parameters:
@@ -86,6 +88,7 @@ export function createTagRoutes(metadataService: MetadataService): Router {
    *       404:
    *         description: Blob not found
    *   put:
+   *     operationId: setTags
    *     summary: Set (replace all) tags on a blob
    *     tags: [Tags]
    *     parameters:

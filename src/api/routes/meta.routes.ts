@@ -15,6 +15,7 @@ export function createMetaRoutes(metadataService: MetadataService): Router {
    * @openapi
    * /api/v1/meta/{path}:
    *   get:
+   *     operationId: getMetadata
    *     summary: Get all metadata for a blob
    *     tags: [Metadata]
    *     parameters:
@@ -44,6 +45,7 @@ export function createMetaRoutes(metadataService: MetadataService): Router {
    *       404:
    *         description: Blob not found
    *   put:
+   *     operationId: setMetadata
    *     summary: Set (replace all) metadata on a blob
    *     tags: [Metadata]
    *     parameters:
@@ -74,6 +76,7 @@ export function createMetaRoutes(metadataService: MetadataService): Router {
    *       404:
    *         description: Blob not found
    *   patch:
+   *     operationId: updateMetadata
    *     summary: Merge metadata into existing blob metadata
    *     tags: [Metadata]
    *     parameters:
@@ -104,6 +107,7 @@ export function createMetaRoutes(metadataService: MetadataService): Router {
    *       404:
    *         description: Blob not found
    *   delete:
+   *     operationId: deleteMetadata
    *     summary: Delete specific metadata keys from a blob
    *     tags: [Metadata]
    *     parameters:
