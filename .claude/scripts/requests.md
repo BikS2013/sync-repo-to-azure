@@ -11,3 +11,11 @@ I want also to support the concept of enriching the files stored in the storage 
 /create-prompt 
 
 To use the research output and my answers to prepare a plan to build the tool
+
+
+/team-workflow
+To extend the tool to allow it to replicate 
+- a complete github repository to an azure storage folder 
+- a complete azure devops repository to an azure storage folder 
+Both capabilities must be offered by cli and API interfaces 
+Everything must be documented according to the instructions 

@@ -99,6 +99,30 @@ export function createApp(
  *   6. Register graceful shutdown handlers
  */
 export async function startServer(): Promise<void> {
+  // 0. Sync remote files and env vars from Azure Blob Storage (before any config reads)
+  //    If AZURE_VENV is not configured, this is a no-op and returns immediately.
+  //    Dynamic import required: azure-venv is an ESM package, this project is CommonJS.
+  try {
+    const azureVenv = await import("azure-venv");
+    const syncResult = await azureVenv.initAzureVenv({ failOnError: true });
+    if (syncResult.attempted) {
+      const msg = `azure-venv: ${syncResult.downloaded} downloaded, ${syncResult.skipped} skipped, ${syncResult.failed} failed in ${syncResult.duration}ms`;
+      process.stdout.write(`${msg}\n`);
+    }
+  } catch (error) {
+    // ConfigurationError and AuthenticationError always throw regardless of failOnError
+    const errorName = error instanceof Error ? error.constructor.name : "";
+    if (errorName === "ConfigurationError") {
+      process.stderr.write(`azure-venv configuration error: ${(error as Error).message}\n`);
+      process.exit(2);
+    }
+    if (errorName === "AuthenticationError") {
+      process.stderr.write(`azure-venv authentication error (SAS token expired or invalid): ${(error as Error).message}\n`);
+      process.exit(2);
+    }
+    throw error;
+  }
+
   // 1. Load and validate all configuration (base + API section)
   const config = resolveApiConfig();
 

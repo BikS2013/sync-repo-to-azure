@@ -66,6 +66,9 @@ Read `deployment-instructions.md` when you need to build Docker images, deploy t
 | `AZURE_FS_RETRY_INITIAL_DELAY_MS` | Initial retry delay in ms |
 | `AZURE_FS_RETRY_MAX_DELAY_MS` | Maximum retry delay in ms |
 | `AZURE_FS_BATCH_CONCURRENCY` | Max parallel uploads for batch operations (upload-dir) |
+| `AZURE_VENV` | Azure Blob Storage URL for remote config sync (format: `https://<account>.blob.core.windows.net/<container>/<prefix>`) |
+| `AZURE_VENV_SAS_TOKEN` | SAS token with Read + List permissions for azure-venv (no leading `?`) |
+| `AZURE_VENV_SAS_EXPIRY` | SAS token expiry in ISO 8601 format for proactive warnings (optional) |
 | `AZURE_FS_API_PORT` | REST API server port (e.g., 3000) |
 | `AZURE_FS_API_HOST` | REST API server bind host (e.g., 0.0.0.0) |
 | `AZURE_FS_API_CORS_ORIGINS` | Comma-separated allowed CORS origins (e.g., * or specific URLs) |

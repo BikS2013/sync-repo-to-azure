@@ -478,6 +478,7 @@ HTTP Request
 
 Services are instantiated **once** at server startup and injected into controllers via closures:
 
+0. `initAzureVenv()` syncs remote files and environment variables from Azure Blob Storage (no-op if `AZURE_VENV` is not set). This runs **before** any config resolution so that remote `.env` values are available in `process.env`.
 1. `loadApiConfig()` resolves and validates configuration (base + API section)
 2. `new Logger(config.logging.level)` creates a shared logger
 3. `new BlobFileSystemService(config, logger)` creates the file system service (holds `ContainerClient`)

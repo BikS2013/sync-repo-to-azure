@@ -718,6 +718,9 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
 | `AUTO_SELECT_PORT` | `api.autoSelectPort` | Yes (API mode only) |
 | `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` | `api.swaggerAdditionalServers` | No (optional) |
 | `AZURE_FS_API_SWAGGER_SERVER_VARIABLES` | `api.swaggerServerVariables` | No (optional) |
+| `AZURE_VENV` | Azure Blob Storage URL for remote config sync | No (optional, both AZURE_VENV and AZURE_VENV_SAS_TOKEN must be set together) |
+| `AZURE_VENV_SAS_TOKEN` | SAS token for azure-venv (Read + List) | No (paired with AZURE_VENV) |
+| `AZURE_VENV_SAS_EXPIRY` | SAS token expiry for proactive warnings | No (optional) |
 | `PUBLIC_URL` | Swagger URL override | No (optional, auto-detection) |
 | `WEBSITE_HOSTNAME` | Swagger URL detection | No (auto-set by Azure App Service) |
 | `WEBSITE_SITE_NAME` | Swagger HTTPS detection | No (auto-set by Azure App Service) |
@@ -783,6 +786,87 @@ Use `azure-fs config validate` to verify that:
 4. The target container exists and is accessible.
 
 Use `azure-fs config show` to inspect the merged configuration without validation (sensitive values are masked in the output).
+
+---
+
+## Azure VENV (Remote Config Sync)
+
+The API integrates the `azure-venv` library to sync files and environment variables from Azure Blob Storage on startup. This enables centralized configuration management across environments. If neither `AZURE_VENV` nor `AZURE_VENV_SAS_TOKEN` is set, the library is a no-op and the API starts normally.
+
+### `AZURE_VENV`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Azure Blob Storage URL pointing to the remote config prefix. All blobs under this prefix are synced to the local app root on startup. A `.env` file under this prefix is loaded with three-tier precedence (OS env > remote .env > local .env). |
+| **Required** | Yes (both `AZURE_VENV` and `AZURE_VENV_SAS_TOKEN` must be set together, or both absent) |
+| **Type** | String (URL) |
+| **Environment variable** | `AZURE_VENV` |
+| **Format** | `https://<account>.blob.core.windows.net/<container>/<prefix>` |
+
+**How to obtain:**
+Compose the URL from your Azure Storage account name, container name, and the virtual directory prefix where your config files are stored.
+
+**Example:** `https://myaccount.blob.core.windows.net/config/azure-fs/prod` syncs all blobs under the `config/azure-fs/prod/` prefix.
+
+**Recommended management:**
+Store in the `.env` file. Use different values per environment (dev/staging/prod) to point to different config prefixes.
+
+---
+
+### `AZURE_VENV_SAS_TOKEN`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | SAS token granting Read and List permissions to the blob container referenced in `AZURE_VENV`. |
+| **Required** | Yes (paired with `AZURE_VENV`) |
+| **Type** | String (no leading `?`) |
+| **Environment variable** | `AZURE_VENV_SAS_TOKEN` |
+
+**How to obtain:**
+
+Generate via Azure CLI:
+```bash
+az storage container generate-sas \
+  --account-name <account> \
+  --name <container> \
+  --permissions rl \
+  --expiry 2027-12-31 \
+  --output tsv
+```
+
+Or via Azure Portal: Storage Account > Shared access signature (select Read + List permissions).
+
+**Recommended management:**
+- **Never commit to version control.** Store in `.env` (gitignored).
+- For CI/CD, use pipeline secret variables or a secrets manager.
+
+---
+
+### `AZURE_VENV_SAS_EXPIRY`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | The expiration date of the `AZURE_VENV_SAS_TOKEN`. When set, the library warns 7 days before expiry. |
+| **Required** | No (optional, but recommended) |
+| **Type** | String (ISO 8601 date, e.g., `2027-12-31T00:00:00Z`) |
+| **Environment variable** | `AZURE_VENV_SAS_EXPIRY` |
+
+**Recommended management:**
+Always set when using `AZURE_VENV_SAS_TOKEN` to get proactive expiry warnings. Update when rotating the SAS token.
+
+---
+
+### Environment Variable Precedence (azure-venv)
+
+When `azure-venv` is active, environment variables are resolved in this order (highest wins):
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 (highest) | **OS environment** | Variables already in `process.env` before any `.env` loading |
+| 2 | **Remote `.env`** | Downloaded from Azure Blob Storage (`<prefix>/.env`) |
+| 3 (lowest) | **Local `.env`** | On disk at the project root |
+
+This means OS-level environment variables (e.g., set in Docker Compose, Azure App Service, or CI/CD) always take precedence over remote or local `.env` files.
 
 ---
 

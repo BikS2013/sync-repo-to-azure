@@ -6,3 +6,4 @@ dist/
 *.d.ts.map
 
 .DS_Store
+.azure-venv-manifest.json
