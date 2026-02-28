@@ -3,62 +3,51 @@
 ## TypeScript
 - **Strict mode** enabled in tsconfig.json
 - **Target**: ES2022, **Module**: CommonJS
-- All code strongly typed — no `any` except in catch blocks (`catch (err: any)`)
+- All code strongly typed — no `any` except in catch blocks
 - Interfaces for all data transfer objects (types/ directory)
-- Type barrel exports via `index.ts`
+- Type barrel exports via `types/index.ts`
 
 ## Naming Conventions
-- **Files**: kebab-case with suffix: `blob-filesystem.service.ts`, `config.types.ts`, `base.error.ts`
-- **Classes**: PascalCase: `BlobFileSystemService`, `MetadataService`, `AzureFsError`
-- **Interfaces**: PascalCase, no prefix: `FileInfo`, `ResolvedConfig`, `PatchInstruction`
-- **Functions**: camelCase: `resolveConfig`, `validatePath`, `formatSuccess`
+- **Files**: kebab-case with suffix: `repo-replication.service.ts`, `config.types.ts`, `base.error.ts`
+- **Classes**: PascalCase: `RepoReplicationService`, `GitHubClientService`, `DevOpsClientService`
+- **Interfaces**: PascalCase, no prefix: `RepoReplicationResult`, `ResolvedConfig`, `SyncPairConfig`
+- **Functions**: camelCase: `resolveConfig`, `createRepoController`, `formatSuccess`
 - **Constants**: PascalCase for enum-like: `ExitCode`, camelCase for regular: `program`
-- **Error classes**: PascalCase with Error suffix: `ConfigError`, `BlobNotFoundError`
+- **Error classes**: PascalCase with Error suffix: `ConfigError`, `RepoReplicationError`, `AuthError`
 
 ## Architecture Patterns
-- **Service layer**: Classes with constructor injection (config, logger, retryConfig)
-- **Factory pattern**: Auth service uses factory functions per auth method
+- **Service layer**: Classes with constructor injection (config, logger)
+- **Factory pattern**: Auth service (3 methods), controller factory (`createRepoController`)
 - **Error hierarchy**: All errors extend `AzureFsError` base class with `code`, `statusCode`, `details`
-- **Error factories**: Static factory methods on error classes (e.g., `ConfigError.missingRequired()`)
+- **Error factories**: Static factory methods on error classes
 - **Command pattern**: Each command group in separate file with `registerXxxCommands(program)` function
-- **Retry wrapper**: `withRetry<T>(fn, config)` wraps all Azure SDK calls
+- **Retry wrapper**: `withRetry<T>(fn, config)` wraps Azure SDK calls
+- **Streaming pattern**: Archives streamed entry-by-entry to blob storage (no local disk)
 
-## Command Handler Pattern
-Every CLI command follows this structure:
-```typescript
-.action(async (arg: string, options: Record<string, unknown>, cmd: Command) => {
-  const startTime = Date.now();
-  const globalOpts = cmd.parent!.opts();
-  const jsonMode = globalOpts.json === true;
-  try {
-    const config = resolveConfig(globalOpts);
-    const logger = new Logger(config.logging.level, globalOpts.verbose === true);
-    const service = new BlobFileSystemService(config, logger);
-    // ... operation ...
-    const output = formatSuccess(result, "commandName", startTime);
-    outputResult(output, jsonMode);
-  } catch (err) {
-    const output = formatErrorFromException(err, "commandName", startTime);
-    outputResult(output, jsonMode);
-    process.exitCode = exitCodeForError(err);
-  }
-});
-```
+## API Patterns
+- Express 5.x with factory functions (`createApp`, `startServer`)
+- Controller factories returning handler functions
+- Route files registering Express routers
+- Middleware: error handler, request logger, timeout enforcement
+- Swagger/OpenAPI 3.0 auto-generated spec
+- CORS configurable via env vars
+- Graceful shutdown on SIGINT/SIGTERM
 
 ## Configuration Rules (CRITICAL)
 - **NEVER** use fallback/default values for configuration settings
 - Every missing required config value throws `ConfigError` with instructions
-- Exception must explain all 3 ways to provide the value (CLI flag, env var, config file)
+- Exception must explain all ways to provide the value (CLI flag, env var, config file)
+- Token expiry dates tracked for proactive warning (7 days before)
 
 ## Documentation Rules
-- All CLI tools documented in CLAUDE.md using `<toolName>` XML format
+- CLI tools documented in CLAUDE.md using `<toolName>` XML format
 - Plans in `docs/design/plan-xxx-<description>.md`
 - Test scripts in `test_scripts/` folder
 - Issues tracked in `Issues - Pending Items.md`
+- CLI docs in `cli-instructions.md`, API docs in `api-instructions.md`, deploy docs in `deployment-instructions.md`
+- project-design.md, project-functions.md, configuration-guide.md must stay in sync with code
 
 ## Testing
-- No test framework — plain TypeScript scripts run via ts-node
-- Tests use `execSync` to invoke CLI commands with `--json` flag
-- Each test creates isolated data under unique prefix `test-{timestamp}-{random}/`
-- Cleanup in `finally` blocks
-- Tests require live Azure Storage account (no emulator)
+- Mix of shell scripts (.sh) for CLI/API integration tests and TypeScript scripts
+- Tests require live Azure Storage account + GitHub token / DevOps PAT
+- Shell tests use curl for API endpoints and CLI commands directly
