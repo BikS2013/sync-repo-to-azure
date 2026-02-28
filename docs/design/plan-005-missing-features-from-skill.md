@@ -310,14 +310,14 @@ None needed. The Swagger config module uses these values internally without expo
 - **Add**: Private helper function `getBaseUrl(host: string, port: number): string`:
   ```typescript
   function getBaseUrl(host: string, port: number): string {
-    // Priority 1: Azure App Service
+    // Priority 1: Explicit public URL (overrides all container detection)
+    if (process.env.PUBLIC_URL) {
+      return process.env.PUBLIC_URL;
+    }
+    // Priority 2: Azure App Service
     if (process.env.WEBSITE_HOSTNAME) {
       const protocol = process.env.WEBSITE_SITE_NAME ? "https" : "http";
       return `${protocol}://${process.env.WEBSITE_HOSTNAME}`;
-    }
-    // Priority 2: Explicit public URL
-    if (process.env.PUBLIC_URL) {
-      return process.env.PUBLIC_URL;
     }
     // Priority 3: Kubernetes
     if (process.env.K8S_SERVICE_HOST && process.env.K8S_SERVICE_PORT) {

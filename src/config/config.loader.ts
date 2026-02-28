@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import {
-  AzureFsConfigFile,
+  RepoSyncConfigFile,
   CliOptions,
   ResolvedConfig,
   ConfigSourceLabel,
@@ -40,13 +40,13 @@ function createSourceTracker(): ConfigSourceTracker {
  * Load the configuration file from disk.
  * Search order:
  *   1. Explicit --config path (if provided)
- *   2. Current working directory (./.azure-fs.json)
- *   3. User home directory (~/.azure-fs.json)
+ *   2. Current working directory (./.repo-sync.json)
+ *   3. User home directory (~/.repo-sync.json)
  *
  * Returns the parsed file content, or an empty object if no config file is found.
  * Throws ConfigError if the explicit --config path does not exist or is not valid JSON.
  */
-function loadConfigFile(configPath?: string): AzureFsConfigFile {
+function loadConfigFile(configPath?: string): RepoSyncConfigFile {
   const searchPaths: string[] = [];
 
   if (configPath) {
@@ -62,15 +62,15 @@ function loadConfigFile(configPath?: string): AzureFsConfigFile {
     searchPaths.push(resolvedPath);
   } else {
     // Search: CWD then HOME
-    searchPaths.push(path.join(process.cwd(), ".azure-fs.json"));
-    searchPaths.push(path.join(os.homedir(), ".azure-fs.json"));
+    searchPaths.push(path.join(process.cwd(), ".repo-sync.json"));
+    searchPaths.push(path.join(os.homedir(), ".repo-sync.json"));
   }
 
   for (const filePath of searchPaths) {
     if (fs.existsSync(filePath)) {
       try {
         const content = fs.readFileSync(filePath, "utf-8");
-        return JSON.parse(content) as AzureFsConfigFile;
+        return JSON.parse(content) as RepoSyncConfigFile;
       } catch (err) {
         throw new ConfigError(
           "CONFIG_FILE_PARSE_ERROR",
@@ -102,15 +102,17 @@ function loadEnvConfig(): EnvConfigResult {
     storage: {},
     logging: {},
     retry: {},
-    batch: {},
     api: {},
+    github: {},
+    devops: {},
   };
   const envVarNames: Record<string, Record<string, string>> = {
     storage: {},
     logging: {},
     retry: {},
-    batch: {},
     api: {},
+    github: {},
+    devops: {},
   };
 
   // Helper: set value and record env var name
@@ -149,9 +151,6 @@ function loadEnvConfig(): EnvConfigResult {
   if (process.env.AZURE_FS_RETRY_MAX_DELAY_MS) {
     setEnv("retry", "maxDelayMs", Number(process.env.AZURE_FS_RETRY_MAX_DELAY_MS), "AZURE_FS_RETRY_MAX_DELAY_MS");
   }
-  if (process.env.AZURE_FS_BATCH_CONCURRENCY) {
-    setEnv("batch", "concurrency", Number(process.env.AZURE_FS_BATCH_CONCURRENCY), "AZURE_FS_BATCH_CONCURRENCY");
-  }
 
   // --- API-specific environment variables ---
   if (process.env.AZURE_FS_API_PORT) {
@@ -165,9 +164,6 @@ function loadEnvConfig(): EnvConfigResult {
   }
   if (process.env.AZURE_FS_API_SWAGGER_ENABLED !== undefined && process.env.AZURE_FS_API_SWAGGER_ENABLED !== "") {
     setEnv("api", "swaggerEnabled", process.env.AZURE_FS_API_SWAGGER_ENABLED === "true", "AZURE_FS_API_SWAGGER_ENABLED");
-  }
-  if (process.env.AZURE_FS_API_UPLOAD_MAX_SIZE_MB) {
-    setEnv("api", "uploadMaxSizeMb", Number(process.env.AZURE_FS_API_UPLOAD_MAX_SIZE_MB), "AZURE_FS_API_UPLOAD_MAX_SIZE_MB");
   }
   if (process.env.AZURE_FS_API_REQUEST_TIMEOUT_MS) {
     setEnv("api", "requestTimeoutMs", Number(process.env.AZURE_FS_API_REQUEST_TIMEOUT_MS), "AZURE_FS_API_REQUEST_TIMEOUT_MS");
@@ -193,6 +189,28 @@ function loadEnvConfig(): EnvConfigResult {
     setEnv("api", "swaggerServerVariables", process.env.AZURE_FS_API_SWAGGER_SERVER_VARIABLES === "true", "AZURE_FS_API_SWAGGER_SERVER_VARIABLES");
   }
 
+  // --- Repository replication: GitHub environment variables ---
+  if (process.env.GITHUB_TOKEN) {
+    setEnv("github", "token", process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
+  }
+  if (process.env.GITHUB_TOKEN_EXPIRY) {
+    setEnv("github", "tokenExpiry", process.env.GITHUB_TOKEN_EXPIRY, "GITHUB_TOKEN_EXPIRY");
+  }
+
+  // --- Repository replication: Azure DevOps environment variables ---
+  if (process.env.AZURE_DEVOPS_PAT) {
+    setEnv("devops", "pat", process.env.AZURE_DEVOPS_PAT, "AZURE_DEVOPS_PAT");
+  }
+  if (process.env.AZURE_DEVOPS_PAT_EXPIRY) {
+    setEnv("devops", "patExpiry", process.env.AZURE_DEVOPS_PAT_EXPIRY, "AZURE_DEVOPS_PAT_EXPIRY");
+  }
+  if (process.env.AZURE_DEVOPS_AUTH_METHOD) {
+    setEnv("devops", "authMethod", process.env.AZURE_DEVOPS_AUTH_METHOD, "AZURE_DEVOPS_AUTH_METHOD");
+  }
+  if (process.env.AZURE_DEVOPS_ORG_URL) {
+    setEnv("devops", "orgUrl", process.env.AZURE_DEVOPS_ORG_URL, "AZURE_DEVOPS_ORG_URL");
+  }
+
   return { values, envVarNames };
 }
 
@@ -205,8 +223,9 @@ function loadCliConfig(cliOptions: CliOptions): Record<string, Record<string, un
     storage: {},
     logging: {},
     retry: {},
-    batch: {},
     api: {},
+    github: {},
+    devops: {},
   };
 
   if (cliOptions.accountUrl) {
@@ -289,7 +308,7 @@ function buildMergedConfig(
   const envResult = loadEnvConfig();
   const cliConfig = loadCliConfig(cliOptions);
 
-  const sections = ["storage", "logging", "retry", "batch", "api"] as const;
+  const sections = ["storage", "logging", "retry", "api", "github", "devops"] as const;
   const merged: Record<string, unknown> = {};
 
   for (const section of sections) {
@@ -318,7 +337,7 @@ function buildMergedConfig(
 export function loadConfig(cliOptions: CliOptions): ResolvedConfig {
   const merged = buildMergedConfig(cliOptions);
 
-  // Validate base config (storage, logging, retry, batch) -- throws ConfigError for any missing required field
+  // Validate base config (storage, logging, retry) -- throws ConfigError for any missing required field
   return validateConfig(merged);
 }
 

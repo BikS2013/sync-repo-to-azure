@@ -1,16 +1,14 @@
 import { AzureFsError } from "../errors/base.error";
 import { ConfigError } from "../errors/config.error";
 import { AuthError } from "../errors/auth.error";
-import { PathError } from "../errors/path.error";
-import { MetadataError } from "../errors/metadata.error";
 
 /**
- * Process exit codes for the azure-fs CLI.
+ * Process exit codes for the repo-sync CLI.
  *
  *   0 = success (default)
- *   1 = operation error (blob not found, network error, concurrent modification, etc.)
+ *   1 = operation error (network error, repo replication failure, etc.)
  *   2 = config/auth error (missing config, invalid auth)
- *   3 = validation error (invalid path, metadata limits exceeded)
+ *   3 = validation error (invalid parameters)
  */
 export const ExitCode = {
   SUCCESS: 0,
@@ -30,12 +28,6 @@ export function exitCodeForError(err: unknown): ExitCodeValue {
   }
   if (err instanceof AuthError) {
     return ExitCode.CONFIG_ERROR;
-  }
-  if (err instanceof PathError) {
-    return ExitCode.VALIDATION_ERROR;
-  }
-  if (err instanceof MetadataError) {
-    return ExitCode.VALIDATION_ERROR;
   }
   if (err instanceof AzureFsError) {
     return ExitCode.OPERATION_ERROR;

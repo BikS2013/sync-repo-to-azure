@@ -19,3 +19,28 @@ To extend the tool to allow it to replicate
 - a complete azure devops repository to an azure storage folder 
 Both capabilities must be offered by cli and API interfaces 
 Everything must be documented according to the instructions 
+
+
+/change-workflow 
+I want you to change the module that sync GitHub or Azure DevOps repositories with Azure storage to get configuration pairs ( repo to azure storage ) either in json or yaml format similar to this:
+<github-sync>
+- sync-pair-name 
+   - github-repo 
+   - github-pat
+
+   - azure-storage-address 
+   - container 
+   - folder (which can be / )
+   - Azure-SAS
+</github-sync>
+<azure-devops-sync>
+- sync-pair-name 
+   - azure-devops-repo 
+   - azure-devops-pat
+
+   - azure-storage-address 
+   - container 
+   - folder (which can be / )
+   - Azure-SAS
+</azure-devops-sync>
+

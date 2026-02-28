@@ -2,8 +2,10 @@ node_modules/
 dist/
 .env
 .azure-fs.json
+.repo-sync.json
 *.js.map
 *.d.ts.map
 
 .DS_Store
 .azure-venv-manifest.json
+config/

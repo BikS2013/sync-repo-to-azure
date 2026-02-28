@@ -2,27 +2,85 @@
 
 ## Pending
 
-### P1 - Root Folder Listing Fails on Azure App Service
+### P3 - Sync Pair Feature: Design Deviation -- SyncPairItemResult Missing errorCode Field
 
-**Detected**: 2026-02-26
-**Location**: `src/api/routes/folder.routes.ts` -- `GET /api/v1/folders/*path`
+**Detected**: 2026-02-28 (code review of Plan 008 sync pair implementation)
+**Location**: `src/types/repo-replication.types.ts` (SyncPairItemResult), `src/services/repo-replication.service.ts` (executeSyncPair)
 
-**Description**: Listing the root folder (`/`) works locally and in Docker via `GET /api/v1/folders/%2F`, but fails on Azure App Service. App Service's reverse proxy (IIS/Kestrel) decodes `%2F` to `/` before the request reaches Express, collapsing the path to `/api/v1/folders/` which matches no route (the `/*path` pattern requires at least one segment). Workaround: list known top-level folders individually. Fix options: (a) add a dedicated `GET /api/v1/folders` route (no path param) that lists the container root, or (b) use double-encoding `%252F`.
-
----
-
-### P2 - Swagger Priority Order Deviation from Plan (DOCUMENTED)
-
-**Detected**: 2026-02-23 (code review of Plan 005 features)
-**Location**: `src/api/swagger/config.ts` -- `getBaseUrl()`
-
-**Description**: The plan (plan-005) specifies Azure App Service as Priority 1 and PUBLIC_URL as Priority 2 in `getBaseUrl()`. The implementation inverts this: PUBLIC_URL is Priority 1 and Azure App Service is Priority 2. The implementation is correct (PUBLIC_URL should be the explicit override), matching the plan's own acceptance criteria which states "PUBLIC_URL overrides all other container detection." The plan's code sample was inconsistent with its acceptance criteria. No code fix needed -- this is a documentation note.
+**Description**: The technical design (plan-008-sync-pair-technical-design.md, Section 2.1) specifies that `SyncPairItemResult` should include an `errorCode?: string` field. The implementation omits this field from both the interface and the `executeSyncPair` method's error catch block. This is internally consistent (no type errors) but diverges from the design. The error code would have been useful for programmatic error handling by API consumers.
 
 ---
 
 ---
 
 ## Completed
+
+### Plan 009: Strip Generic Storage Features, Rename Project to repo-sync (COMPLETED)
+
+**Detected**: 2026-02-28
+**Completed**: 2026-02-28
+
+**Resolution**: All generic storage files, commands, routes, controllers, services, types, and errors removed. Project renamed from azure-fs to repo-sync. This includes removal of file upload/download, folder operations, edit/patch/append, metadata, tags, and blob-filesystem features. The project now focuses exclusively on repo replication and sync pair functionality.
+
+---
+
+### P1 - Sync Pair Feature: Documentation Not Updated (FIXED)
+
+**Detected**: 2026-02-28 (code review of Plan 008 sync pair implementation)
+**Fixed**: 2026-02-28
+**Location**: `CLAUDE.md`, `cli-instructions.md`, `api-instructions.md`, `docs/design/configuration-guide.md`
+
+**Resolution**: Updated all four documentation files for the sync pair configuration feature (Plan 008):
+1. **CLAUDE.md**: Added `src/config/sync-pair.loader.ts` to project structure, updated `repo.commands.ts` description to include `sync`, updated `repo.routes.ts` description to include `/sync` endpoint, updated `repo-replication.types.ts` to reference sync pair types.
+2. **cli-instructions.md**: Added full `<repo-sync-repo-sync>` command documentation including syntax, options, JSON/YAML config examples, exit codes, and fail-open behavior.
+3. **api-instructions.md**: Added `POST /api/v1/repo/sync` to endpoint table, documented 30-minute timeout, added curl examples, documented response codes (200, 207, 400, 500), and added example responses for success, partial failure, and invalid config.
+4. **configuration-guide.md**: Added comprehensive "Sync Pair Configuration" section documenting file format detection, all fields for GitHub and DevOps sync pairs, destination fields, token expiry behavior, and complete example configs in both JSON and YAML.
+
+---
+
+### P2 - Swagger Priority Order Deviation from Plan (FIXED)
+
+**Detected**: 2026-02-23 (code review of Plan 005 features)
+**Fixed**: 2026-02-28
+**Location**: `docs/design/plan-005-missing-features-from-skill.md` -- `getBaseUrl()` code sample
+
+**Resolution**: Fixed the code sample in Plan 005 to match the acceptance criteria and actual implementation. `PUBLIC_URL` is now Priority 1 (overrides all container detection), Azure App Service is Priority 2. The plan's code sample previously had them inverted, contradicting its own acceptance criteria.
+
+### P3 - Repo Replication Services Bypass Config System for Non-Secret Settings (FIXED)
+
+**Detected**: 2026-02-28 (code review of Plan 007 implementation)
+**Fixed**: 2026-02-28
+**Location**: `src/services/github-client.service.ts`, `src/services/devops-client.service.ts`, `src/services/repo-replication.service.ts`
+
+**Resolution**: Both client services read all configuration directly from `process.env` instead of from `ResolvedConfig`. This bypassed the layered config merge (CLI > env > config file), meaning config file values for `devops.authMethod` and `devops.orgUrl` were silently ignored. Fixed by changing constructors to accept `ResolvedConfig` and reading all settings from the resolved config object. `RepoReplicationService` now also accepts `ResolvedConfig` and forwards it to client services. CLI commands and API server updated to pass config through.
+
+---
+
+### P3 - Repo Replication: Large File Size Tracking Inaccuracy in uploadStream Path (FIXED)
+
+**Detected**: 2026-02-28 (code review of Plan 007 implementation)
+**Fixed**: 2026-02-28
+**Location**: `src/services/repo-replication.service.ts` -- `uploadEntryToBlob()`
+
+**Resolution**: When a file was uploaded via `uploadStream()`, the actual byte count was not tracked (fell back to `size ?? 0`). Fixed by wrapping the entry stream in a counting `Transform` that tallies `bytesWritten` as chunks flow through. The stream is piped through the counter into `blockBlobClient.uploadStream()`, giving an accurate byte count with zero overhead.
+
+### P1 - Repo Replication: Zip Pipeline Race Condition (FIXED)
+
+**Detected**: 2026-02-28 (code review of Plan 007 implementation)
+**Fixed**: 2026-02-28
+**Location**: `src/services/repo-replication.service.ts` -- `streamZipToBlob()`
+
+**Resolution**: The `parser.on("close")` event fired when unzipper finished parsing the stream, but async upload promises could still be in flight. This meant `resolve(stats)` could be called with incomplete stats (missing the last file's success/failure). Fixed by tracking all upload promises in a `pendingUploads` array and calling `Promise.all(pendingUploads)` in the close handler before resolving.
+
+---
+
+### P1 - Repo Replication: Timeout Stacking Bug (FIXED)
+
+**Detected**: 2026-02-28 (code review of Plan 007 implementation)
+**Fixed**: 2026-02-28
+**Location**: `src/api/middleware/timeout.middleware.ts`, `src/api/routes/repo.routes.ts`
+
+**Resolution**: The repo routes applied a 5-minute timeout via `router.use(createTimeoutMiddleware(300000))`, but the global timeout middleware (e.g., 30s) from `server.ts` was still active. Both timers ran concurrently, and the global one would fire first, returning HTTP 408 before the route-specific timeout took effect. Fixed by storing the timer on the request object via a Symbol key; when a subsequent timeout middleware is applied, it clears the previous timer before setting a new one. This enables clean per-route timeout overrides.
 
 ### P2 - Config Source Tracker Key Mismatch with Dev Routes (FIXED)
 
@@ -51,43 +109,3 @@
 **Location**: `src/api/swagger/config.ts` -- `buildSwaggerServers()`
 
 **Resolution**: `buildSwaggerServers()` was reading `process.env.AZURE_FS_API_SWAGGER_SERVER_VARIABLES` and `process.env.AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` directly, even though these values are already loaded, validated, and available on the `apiConfig` object (as `apiConfig.swaggerServerVariables` and `apiConfig.swaggerAdditionalServers`). Changed to use `apiConfig` fields, eliminating the duplication and ensuring the config system is the single source of truth.
-
----
-
-### Feature - REST API Layer (IMPLEMENTED)
-
-**Detected**: 2026-02-23
-**Implemented**: 2026-02-23
-**Plan**: `docs/design/plan-004-rest-api-layer.md`
-
-**Resolution**: Added Express-based REST API server exposing all Azure Blob Storage operations over HTTP. Includes file CRUD (upload, download, delete, replace, info, exists), folder operations (list, create, delete, exists), edit operations (patch, append, edit workflow with ETag concurrency), metadata CRUD, and tag operations with query support. Health endpoints (liveness + readiness) for container orchestration. Swagger UI documentation at `/api/docs` (configurable). Multer-based multipart file uploads, CORS support, request timeout middleware, structured error handling. Six new `AZURE_FS_API_*` configuration parameters added.
-
----
-
-### Feature - Batch Upload with Parallel Uploads (IMPLEMENTED)
-
-**Detected**: 2026-02-23 (performance testing revealed ~67s for 61 sequential uploads)
-**Implemented**: 2026-02-23
-**Plan**: `docs/design/plan-003-batch-upload-parallel.md`
-
-**Resolution**: Added `upload-dir` CLI command with configurable parallelism (`batch.concurrency` / `AZURE_FS_BATCH_CONCURRENCY`). New `uploadDirectory()` method in `BlobFileSystemService` walks a local directory recursively, skips excluded patterns, and uploads files in parallel using a zero-dependency `parallelLimit()` utility. Expected 5x-13x speedup over sequential per-file CLI invocations.
-
----
-
-### P2 - Unexported Utility: `streamToBuffer` (FIXED)
-
-**Detected**: 2026-02-23 (Serena analysis)
-**Fixed**: 2026-02-23
-**Location**: `src/utils/stream.utils.ts`
-
-**Resolution**: Removed `export` keyword from `streamToBuffer`. It is now a module-private function, only consumed internally by `streamToString` in the same file.
-
----
-
-### P1 - Architectural Inconsistency: Service Constructor Patterns (FIXED)
-
-**Detected**: 2026-02-23 (Serena analysis)
-**Fixed**: 2026-02-23
-**Location**: `src/services/metadata.service.ts`, `src/commands/meta.commands.ts`, `src/commands/tags.commands.ts`
-
-**Resolution**: Refactored `MetadataService` constructor to accept `(config: ResolvedConfig, logger: Logger)` — matching the `BlobFileSystemService` pattern. The service now creates its own `ContainerClient` and `RetryConfig` internally. Removed boilerplate `createContainerClient()` and `retryConfigFromResolved()` calls from `meta.commands.ts` and `tags.commands.ts`. Updated dependency graph in `docs/design/project-design.md`.

@@ -16,7 +16,6 @@ export interface ApiConfig {
   host: string;
   corsOrigins: string[];
   swaggerEnabled: boolean;
-  uploadMaxSizeMb: number;
   requestTimeoutMs: number;
   nodeEnv: NodeEnvironment;
   autoSelectPort: boolean;

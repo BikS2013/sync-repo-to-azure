@@ -1,6 +1,10 @@
-# Azure Blob Storage File System CLI - Configuration Guide
+# Repo Sync CLI - Configuration Guide
 
-This guide documents every configuration variable used by the `azure-fs` CLI tool, how to obtain each value, the recommended management approach, and what each option means for the project.
+This guide documents every configuration variable used by the `repo-sync` CLI tool, how to obtain each value, the recommended management approach, and what each option means for the project.
+
+The `repo-sync` tool replicates Git repositories (from GitHub and Azure DevOps) to Azure Blob Storage. It supports individual repository cloning and batch sync pair operations.
+
+> **Note:** Environment variables with the `AZURE_FS_` prefix are retained for backward compatibility with earlier versions of this tool (formerly named `azure-fs`).
 
 ---
 
@@ -12,7 +16,7 @@ The tool loads configuration from three sources, merged in the following priorit
 |----------|--------|-------------|
 | 1 (highest) | **CLI Flags** | Passed directly on the command line (`--account-url`, `--container`, `--auth-method`) |
 | 2 | **Environment Variables** | Set in the shell or via a `.env` file |
-| 3 (lowest) | **Config File** | JSON file at `.azure-fs.json` (or custom path via `--config`) |
+| 3 (lowest) | **Config File** | JSON file at `.repo-sync.json` (or custom path via `--config`) |
 
 When a value is present in multiple sources, the highest-priority source wins. All required variables must be resolved from at least one source; there are **no default or fallback values**. A missing required variable will raise a `ConfigError` with instructions on how to provide it.
 
@@ -24,7 +28,7 @@ When a value is present in multiple sources, the highest-priority source wins. A
 
 | Attribute | Value |
 |-----------|-------|
-| **Purpose** | The full URL of the Azure Storage account that the tool connects to. This is the root endpoint for all blob operations. |
+| **Purpose** | The full URL of the Azure Storage account that the tool connects to. This is the root endpoint for all blob operations (repository archive uploads). |
 | **Required** | Yes |
 | **Type** | String (URL) |
 | **Config file key** | `storage.accountUrl` |
@@ -39,7 +43,7 @@ When a value is present in multiple sources, the highest-priority source wins. A
 4. Copy the **Blob service** URL (e.g., `https://myaccount.blob.core.windows.net`).
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file for project-level usage, or set as an environment variable for CI/CD pipelines. Use the CLI flag only for ad-hoc overrides.
+Store in the `.repo-sync.json` config file for project-level usage, or set as an environment variable for CI/CD pipelines. Use the CLI flag only for ad-hoc overrides.
 
 ---
 
@@ -47,7 +51,7 @@ Store in the `.azure-fs.json` config file for project-level usage, or set as an 
 
 | Attribute | Value |
 |-----------|-------|
-| **Purpose** | The name of the Azure Blob Storage container to operate on. All file/folder commands target this container. |
+| **Purpose** | The name of the Azure Blob Storage container to operate on. Repository archives are uploaded to this container. |
 | **Required** | Yes |
 | **Type** | String |
 | **Config file key** | `storage.containerName` |
@@ -61,7 +65,7 @@ Store in the `.azure-fs.json` config file for project-level usage, or set as an 
 3. Copy the name of the target container. If no container exists yet, create one from this page.
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. Use the CLI flag when you need to temporarily operate on a different container.
+Store in the `.repo-sync.json` config file. Use the CLI flag when you need to temporarily operate on a different container.
 
 ---
 
@@ -88,7 +92,7 @@ Store in the `.azure-fs.json` config file. Use the CLI flag when you need to tem
 This is a choice you make based on your security requirements. See the "Authentication Secrets" section below for how to obtain the corresponding credentials for each method.
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. Default to `azure-ad` for the best security posture.
+Store in the `.repo-sync.json` config file. Default to `azure-ad` for the best security posture.
 
 ---
 
@@ -180,7 +184,7 @@ The expiry value must match the expiry date set when generating the SAS token:
 3. The value must be a valid ISO 8601 date string (e.g., `2026-12-31T00:00:00Z`).
 
 **Recommended management:**
-- Store in the `.azure-fs.json` config file alongside other storage settings, or set as the `AZURE_STORAGE_SAS_TOKEN_EXPIRY` environment variable.
+- Store in the `.repo-sync.json` config file alongside other storage settings, or set as the `AZURE_STORAGE_SAS_TOKEN_EXPIRY` environment variable.
 - Always keep this value in sync with the actual SAS token expiry. When you rotate the SAS token, update this value at the same time.
 - For CI/CD pipelines that generate SAS tokens dynamically, set this environment variable to the same expiry used during generation.
 
@@ -243,7 +247,7 @@ This is sufficient for local usage. No additional environment variables are need
 | `debug` | All messages are logged, including detailed diagnostics. | Development and troubleshooting. Produces verbose output. |
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. Use `info` for everyday usage and `debug` when troubleshooting. Note that the `--verbose` / `-v` CLI flag provides per-command debug output independently of this setting.
+Store in the `.repo-sync.json` config file. Use `info` for everyday usage and `debug` when troubleshooting. Note that the `--verbose` / `-v` CLI flag provides per-command debug output independently of this setting.
 
 **Runtime toggle (API mode):** When the API server is running with `NODE_ENV` not set to `production`, the console hotkey `v` toggles `AZURE_FS_LOG_LEVEL` between `debug` and `info` at runtime. This modifies the environment variable in the running process and takes effect for subsequent log operations without a server restart.
 
@@ -268,7 +272,7 @@ Store in the `.azure-fs.json` config file. Use `info` for everyday usage and `de
 | `false` | HTTP request logging is suppressed. |
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. Keep set to `false` in normal usage. Enable temporarily when diagnosing connectivity, authentication, or performance issues.
+Store in the `.repo-sync.json` config file. Keep set to `false` in normal usage. Enable temporarily when diagnosing connectivity, authentication, or performance issues.
 
 ---
 
@@ -294,7 +298,7 @@ Store in the `.azure-fs.json` config file. Keep set to `false` in normal usage. 
 | `fixed` | Retries with a constant delay of `initialDelayMs` between each attempt. | Use when you want predictable retry timing. |
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. Use `exponential` as the standard strategy.
+Store in the `.repo-sync.json` config file. Use `exponential` as the standard strategy.
 
 ---
 
@@ -315,7 +319,7 @@ Store in the `.azure-fs.json` config file. Use `exponential` as the standard str
 - Increase to `5` or higher for critical operations in unreliable network conditions.
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. A value of `3` is recommended for general use.
+Store in the `.repo-sync.json` config file. A value of `3` is recommended for general use.
 
 ---
 
@@ -336,7 +340,7 @@ Store in the `.azure-fs.json` config file. A value of `3` is recommended for gen
 - Higher values (e.g., `2000`-`5000`) if you expect throttling from Azure.
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. A value of `1000` is recommended.
+Store in the `.repo-sync.json` config file. A value of `1000` is recommended.
 
 ---
 
@@ -357,33 +361,7 @@ Store in the `.azure-fs.json` config file. A value of `1000` is recommended.
 - Raise the cap (e.g., `60000`) for batch or background jobs that can tolerate longer waits.
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file. A value of `30000` is recommended.
-
----
-
-### `batch.concurrency`
-
-| Property | Value |
-|----------|-------|
-| **Purpose** | Maximum number of parallel file uploads for the `upload-dir` batch command |
-| **Config file key** | `batch.concurrency` |
-| **Environment variable** | `AZURE_FS_BATCH_CONCURRENCY` |
-| **CLI override** | `--concurrency <n>` (only on `upload-dir` command) |
-| **Required** | Yes |
-| **Type** | Positive integer |
-| **Default** | None (must be explicitly configured) |
-
-**How to obtain:**
-Choose a value based on your network bandwidth and Azure Storage account limits. Azure Blob Storage supports high concurrency; typical values are 5–20. Higher values use more memory and network connections.
-
-**Options and meaning:**
-- `1`: Sequential uploads (no parallelism)
-- `5–10`: Conservative parallelism, suitable for most use cases
-- `10–20`: Higher throughput for fast networks and large batch uploads
-- `20+`: Aggressive parallelism; may hit Azure throttling limits on lower-tier accounts
-
-**Recommended management:**
-Store in the `.azure-fs.json` config file. A value of `10` is recommended as a starting point.
+Store in the `.repo-sync.json` config file. A value of `30000` is recommended.
 
 ---
 
@@ -479,27 +457,6 @@ Enable in development and staging. Disable in production if the API is not inten
 
 ---
 
-### `api.uploadMaxSizeMb`
-
-| Attribute | Value |
-|-----------|-------|
-| **Purpose** | Maximum allowed file size (in megabytes) for upload requests via the API. Requests exceeding this limit are rejected with a 413 status. |
-| **Required** | Yes (when running in API mode) |
-| **Type** | Positive integer (megabytes) |
-| **Config file key** | `api.uploadMaxSizeMb` |
-| **Environment variable** | `AZURE_FS_API_UPLOAD_MAX_SIZE_MB` |
-| **CLI flag** | Not available |
-
-**How to choose a value:**
-- `100` is suitable for most document/data upload scenarios.
-- Increase for large media files or dataset uploads.
-- Azure Blob Storage supports blobs up to 190.7 TiB, but practical limits depend on network and memory.
-
-**Recommended management:**
-Store in the `.azure-fs.json` config file or `.env` file.
-
----
-
 ### `api.requestTimeoutMs`
 
 | Attribute | Value |
@@ -513,11 +470,11 @@ Store in the `.azure-fs.json` config file or `.env` file.
 
 **How to choose a value:**
 - `30000` (30 seconds) is appropriate for most operations.
-- Increase for large file uploads/downloads or operations over slow connections.
-- `60000` (60 seconds) or higher for very large blob transfers.
+- Increase for large repository archives or operations over slow connections.
+- `60000` (60 seconds) or higher for very large repository replications.
 
 **Recommended management:**
-Store in the `.azure-fs.json` config file or `.env` file.
+Store in the `.repo-sync.json` config file or `.env` file.
 
 ---
 
@@ -644,9 +601,173 @@ Do not set any of these for local development. In container/cloud environments, 
 
 ---
 
+## Repository Replication Configuration
+
+These parameters configure authentication and defaults for the repository replication feature (`repo clone-github` and `repo clone-devops` commands, and the corresponding API endpoints). They are provided exclusively as environment variables (never stored in the config file) because they contain secrets.
+
+---
+
+### `GITHUB_TOKEN`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | GitHub Personal Access Token used to authenticate when downloading repository archives. Required for private repositories; optional for public repositories (but recommended to avoid GitHub API rate limits). |
+| **Required** | Conditionally (required for private GitHub repositories) |
+| **Type** | String |
+| **Environment variable** | `GITHUB_TOKEN` |
+| **CLI flag** | Not available |
+| **Config file key** | Not available (secret) |
+
+**How to obtain:**
+
+1. Go to [GitHub Settings](https://github.com/settings/tokens).
+2. Navigate to **Developer settings > Personal access tokens > Fine-grained tokens** (recommended) or **Tokens (classic)**.
+3. For fine-grained tokens: select the target repository or repositories, and grant the **Contents: Read-only** permission under "Repository permissions".
+4. For classic tokens: select the **repo** scope (full control of private repositories).
+5. Click **Generate token** and copy the value.
+
+**Recommended management:**
+- **Never commit to version control.** Store in a `.env` file that is listed in `.gitignore`.
+- For CI/CD, use pipeline secret variables or a secrets manager (GitHub Secrets, Azure Key Vault, etc.).
+- Prefer fine-grained tokens scoped to specific repositories over classic tokens for better security.
+- Set a short expiry (30-90 days) and rotate regularly.
+
+---
+
+### `GITHUB_TOKEN_EXPIRY`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | The expiration date of the GitHub token. When set, the tool checks this value before each operation and logs a warning 7 days before the token expires. This prevents unexpected authentication failures by giving advance notice to renew the token. |
+| **Required** | No (optional, but recommended when `GITHUB_TOKEN` is set) |
+| **Type** | String (ISO 8601 date, e.g., `2026-06-30T00:00:00Z`) |
+| **Environment variable** | `GITHUB_TOKEN_EXPIRY` |
+| **CLI flag** | Not available |
+| **Config file key** | Not available |
+
+**How to obtain:**
+
+When generating a GitHub Personal Access Token, note the expiration date you selected. Convert it to ISO 8601 format (e.g., `2026-06-30T00:00:00Z`).
+
+**Recommended management:**
+Store alongside `GITHUB_TOKEN` in the `.env` file. Update whenever the token is rotated.
+
+---
+
+### `AZURE_DEVOPS_PAT`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Azure DevOps Personal Access Token used to authenticate when downloading repository archives. Required when `AZURE_DEVOPS_AUTH_METHOD` is `pat` (default). |
+| **Required** | Conditionally (required when `AZURE_DEVOPS_AUTH_METHOD = pat`) |
+| **Type** | String |
+| **Environment variable** | `AZURE_DEVOPS_PAT` |
+| **CLI flag** | Not available |
+| **Config file key** | Not available (secret) |
+
+**How to obtain:**
+
+1. Sign in to Azure DevOps (`https://dev.azure.com/{yourorg}`).
+2. Click your profile icon in the top-right corner and select **User settings > Personal access tokens**.
+3. Click **New Token**.
+4. Give the token a descriptive name (e.g., "repo-sync replication").
+5. Set the organization scope to the target organization.
+6. Under **Scopes**, select **Code > Read**.
+7. Set an appropriate expiry date.
+8. Click **Create** and copy the token value.
+
+**Recommended management:**
+- **Never commit to version control.** Store in a `.env` file that is listed in `.gitignore`.
+- For CI/CD, use pipeline secret variables or Azure Key Vault.
+- Scope the PAT to the minimum required permission (Code Read).
+- Set a short expiry (30-90 days) and rotate regularly.
+
+---
+
+### `AZURE_DEVOPS_PAT_EXPIRY`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | The expiration date of the Azure DevOps PAT. When set, the tool checks this value before each operation and logs a warning 7 days before the PAT expires. This prevents unexpected authentication failures by giving advance notice to renew the PAT. |
+| **Required** | No (optional, but recommended when `AZURE_DEVOPS_PAT` is set) |
+| **Type** | String (ISO 8601 date, e.g., `2026-06-30T00:00:00Z`) |
+| **Environment variable** | `AZURE_DEVOPS_PAT_EXPIRY` |
+| **CLI flag** | Not available |
+| **Config file key** | Not available |
+
+**How to obtain:**
+
+When generating an Azure DevOps PAT, note the expiration date you selected. Convert it to ISO 8601 format (e.g., `2026-06-30T00:00:00Z`).
+
+**Recommended management:**
+Store alongside `AZURE_DEVOPS_PAT` in the `.env` file. Update whenever the PAT is rotated.
+
+---
+
+### `AZURE_DEVOPS_AUTH_METHOD`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Determines which authentication mechanism the tool uses to access Azure DevOps repositories. |
+| **Required** | No (defaults to `pat` if `AZURE_DEVOPS_PAT` is set) |
+| **Type** | String (enum) |
+| **Environment variable** | `AZURE_DEVOPS_AUTH_METHOD` |
+| **CLI flag** | Not available |
+| **Config file key** | Not available |
+
+**Options:**
+
+| Value | Description | When to use |
+|-------|-------------|-------------|
+| `pat` | Uses a Personal Access Token for authentication. Requires `AZURE_DEVOPS_PAT` to be set. | Default method. Use for quick setup and CI/CD pipelines. |
+| `azure-ad` | Uses Azure AD (DefaultAzureCredential) for authentication. No PAT needed. | Use in Azure-hosted environments with managed identities, or locally after `az login`. |
+
+**Recommended management:**
+Set as an environment variable. Use `pat` for simple setups and `azure-ad` for Azure-hosted production workloads.
+
+---
+
+### `AZURE_DEVOPS_ORG_URL`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Default Azure DevOps organization URL. When set, provides a default organization for the `repo clone-devops` command, reducing the need to specify `--org` on every invocation. |
+| **Required** | No (optional) |
+| **Type** | String (URL, e.g., `https://dev.azure.com/myorg`) |
+| **Environment variable** | `AZURE_DEVOPS_ORG_URL` |
+| **CLI flag** | Not available |
+| **Config file key** | Not available |
+
+**How to obtain:**
+
+Your Azure DevOps organization URL follows the pattern `https://dev.azure.com/{organization}`. You can find it by navigating to your organization's home page in Azure DevOps.
+
+**Recommended management:**
+Store in the `.env` file. Useful when most of your DevOps operations target a single organization.
+
+---
+
+## Sync Pair Configuration Path
+
+### `AZURE_FS_SYNC_CONFIG_PATH`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Path to the sync pair configuration file (JSON or YAML). Overridden by the CLI `--sync-config` flag. |
+| **Required** | No (optional; can be provided via CLI flag instead) |
+| **Type** | String (file path) |
+| **Environment variable** | `AZURE_FS_SYNC_CONFIG_PATH` |
+| **CLI flag** | `--sync-config` |
+| **Config file key** | Not available |
+
+**Recommended management:**
+Store in the `.env` file for development. Use the CLI flag for ad-hoc overrides.
+
+---
+
 ## Config File Reference
 
-The config file (`.azure-fs.json`) is the recommended way to store non-secret configuration. Below is a complete example with all fields:
+The config file (`.repo-sync.json`) is the recommended way to store non-secret configuration. Below is a complete example with all fields:
 
 ```json
 {
@@ -666,15 +787,11 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
     "initialDelayMs": 1000,
     "maxDelayMs": 30000
   },
-  "batch": {
-    "concurrency": 10
-  },
   "api": {
     "port": 3000,
     "host": "0.0.0.0",
     "corsOrigins": ["*"],
     "swaggerEnabled": true,
-    "uploadMaxSizeMb": 100,
     "requestTimeoutMs": 30000,
     "nodeEnv": "development",
     "autoSelectPort": true
@@ -683,11 +800,11 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
 ```
 
 **File location:**
-- By default, the tool looks for `.azure-fs.json` in the current working directory.
+- By default, the tool looks for `.repo-sync.json` in the current working directory.
 - Use `--config <path>` to specify an alternative path.
-- Use `azure-fs config init` to interactively create the file.
+- Use `repo-sync config init` to interactively create the file.
 
-**Important:** The config file must **not** contain secrets (connection strings, SAS tokens). Those must be provided as environment variables.
+**Important:** The config file must **not** contain secrets (connection strings, SAS tokens, PATs). Those must be provided as environment variables.
 
 ---
 
@@ -707,17 +824,16 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
 | `AZURE_FS_RETRY_MAX_RETRIES` | `retry.maxRetries` | Yes (if not in config file) |
 | `AZURE_FS_RETRY_INITIAL_DELAY_MS` | `retry.initialDelayMs` | Yes (if not in config file, when strategy is not `none`) |
 | `AZURE_FS_RETRY_MAX_DELAY_MS` | `retry.maxDelayMs` | Yes (if not in config file, when strategy is not `none`) |
-| `AZURE_FS_BATCH_CONCURRENCY` | `batch.concurrency` | Yes (if not in config file) |
 | `AZURE_FS_API_PORT` | `api.port` | Yes (API mode only) |
 | `AZURE_FS_API_HOST` | `api.host` | Yes (API mode only) |
 | `AZURE_FS_API_CORS_ORIGINS` | `api.corsOrigins` | Yes (API mode only) |
 | `AZURE_FS_API_SWAGGER_ENABLED` | `api.swaggerEnabled` | Yes (API mode only) |
-| `AZURE_FS_API_UPLOAD_MAX_SIZE_MB` | `api.uploadMaxSizeMb` | Yes (API mode only) |
 | `AZURE_FS_API_REQUEST_TIMEOUT_MS` | `api.requestTimeoutMs` | Yes (API mode only) |
 | `NODE_ENV` | `api.nodeEnv` | Yes (API mode only) |
 | `AUTO_SELECT_PORT` | `api.autoSelectPort` | Yes (API mode only) |
 | `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` | `api.swaggerAdditionalServers` | No (optional) |
 | `AZURE_FS_API_SWAGGER_SERVER_VARIABLES` | `api.swaggerServerVariables` | No (optional) |
+| `AZURE_FS_SYNC_CONFIG_PATH` | Sync pair config file path | No (optional) |
 | `AZURE_VENV` | Azure Blob Storage URL for remote config sync | No (optional, both AZURE_VENV and AZURE_VENV_SAS_TOKEN must be set together) |
 | `AZURE_VENV_SAS_TOKEN` | SAS token for azure-venv (Read + List) | No (paired with AZURE_VENV) |
 | `AZURE_VENV_SAS_EXPIRY` | SAS token expiry for proactive warnings | No (optional) |
@@ -728,6 +844,12 @@ The config file (`.azure-fs.json`) is the recommended way to store non-secret co
 | `K8S_SERVICE_PORT` | Swagger URL detection | No (auto-injected by Kubernetes) |
 | `DOCKER_HOST_URL` | Swagger URL detection | No (optional, Docker) |
 | `AZURE_FS_API_USE_HTTPS` | Swagger HTTPS for K8s | No (optional) |
+| `GITHUB_TOKEN` | GitHub PAT for repo replication | Conditionally (private repos) |
+| `GITHUB_TOKEN_EXPIRY` | GitHub token expiry date | No (optional) |
+| `AZURE_DEVOPS_PAT` | Azure DevOps PAT for repo replication | Conditionally (when auth method = pat) |
+| `AZURE_DEVOPS_PAT_EXPIRY` | Azure DevOps PAT expiry date | No (optional) |
+| `AZURE_DEVOPS_AUTH_METHOD` | DevOps auth method: pat, azure-ad | No (defaults to pat) |
+| `AZURE_DEVOPS_ORG_URL` | Default DevOps organization URL | No (optional) |
 
 ---
 
@@ -741,12 +863,11 @@ Only a subset of configuration can be overridden via CLI flags:
 | `--container <name>` | `-c` | `storage.containerName` | Per-command |
 | `--auth-method <method>` | | `storage.authMethod` | Per-command |
 | `--config <path>` | | Config file path | Per-command |
+| `--sync-config <path>` | | Sync pair config file path | Per-command (repo sync) |
 | `--json` | | JSON output mode | Per-command |
 | `--verbose` | `-v` | Debug logging for command | Per-command |
 
-The `upload-dir` command also supports `--concurrency <n>` to override `batch.concurrency` for that invocation.
-
-Logging, retry, and batch settings (other than `--concurrency` on `upload-dir`) are not available as global CLI flags. They must be configured via the config file or environment variables.
+Logging and retry settings are not available as global CLI flags. They must be configured via the config file or environment variables.
 
 ---
 
@@ -754,23 +875,24 @@ Logging, retry, and batch settings (other than `--concurrency` on `upload-dir`) 
 
 ### Local Development
 
-1. Run `azure-fs config init` to create `.azure-fs.json`.
+1. Run `repo-sync config init` to create `.repo-sync.json`.
 2. Set `authMethod` to `azure-ad`.
 3. Run `az login` to authenticate.
-4. Add `.azure-fs.json` to `.gitignore` if it contains environment-specific values.
+4. Add `.repo-sync.json` to `.gitignore` if it contains environment-specific values.
 
 ### CI/CD Pipeline
 
 1. Use environment variables for all configuration.
-2. For authentication, prefer a service principal with `azure-ad`:
+2. For Azure Storage authentication, prefer a service principal with `azure-ad`:
    - Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` as pipeline secrets.
    - Set `AZURE_FS_AUTH_METHOD=azure-ad`.
 3. Alternatively, generate a short-lived SAS token in the pipeline and use `sas-token`.
-4. Set logging to `warn` or `error` to reduce pipeline output.
+4. For repository access, set `GITHUB_TOKEN` and/or `AZURE_DEVOPS_PAT` as pipeline secrets.
+5. Set logging to `warn` or `error` to reduce pipeline output.
 
 ### Production / Azure-Hosted
 
-1. Use `azure-ad` with a managed identity (no secrets to manage).
+1. Use `azure-ad` with a managed identity (no secrets to manage) for Azure Storage.
 2. Set `retry.strategy` to `exponential` with `maxRetries: 3` or higher.
 3. Set `logging.level` to `warn` and `logging.logRequests` to `false`.
 
@@ -778,14 +900,14 @@ Logging, retry, and batch settings (other than `--concurrency` on `upload-dir`) 
 
 ## Validation
 
-Use `azure-fs config validate` to verify that:
+Use `repo-sync config validate` to verify that:
 
 1. All required configuration variables are present.
 2. All values are valid (correct enum values, non-negative integers).
 3. The authentication credentials work.
 4. The target container exists and is accessible.
 
-Use `azure-fs config show` to inspect the merged configuration without validation (sensitive values are masked in the output).
+Use `repo-sync config show` to inspect the merged configuration without validation (sensitive values are masked in the output).
 
 ---
 
@@ -806,7 +928,7 @@ The API integrates the `azure-venv` library to sync files and environment variab
 **How to obtain:**
 Compose the URL from your Azure Storage account name, container name, and the virtual directory prefix where your config files are stored.
 
-**Example:** `https://myaccount.blob.core.windows.net/config/azure-fs/prod` syncs all blobs under the `config/azure-fs/prod/` prefix.
+**Example:** `https://myaccount.blob.core.windows.net/config/repo-sync/prod` syncs all blobs under the `config/repo-sync/prod/` prefix.
 
 **Recommended management:**
 Store in the `.env` file. Use different values per environment (dev/staging/prod) to point to different config prefixes.
@@ -870,9 +992,205 @@ This means OS-level environment variables (e.g., set in Docker Compose, Azure Ap
 
 ---
 
+## Sync Pair Configuration
+
+The sync pair configuration is a **separate file** (not part of `.repo-sync.json`) used by the `repo sync` CLI command and the `POST /api/v1/repo/sync` API endpoint. It defines one or more repository-to-blob-storage replication pairs, each with its own source credentials and Azure Storage destination.
+
+### Why a Separate File
+
+- Contains secrets (PAT tokens, SAS tokens) that may need different access controls than `.repo-sync.json`.
+- Has a fundamentally different structure (array of pairs vs. flat config).
+- Has a different lifecycle: updated when repositories or storage targets change, not when the tool configuration changes.
+- Avoids bloating the main config validation.
+
+### File Format Detection
+
+The file format is detected by extension:
+
+| Extension | Format |
+|-----------|--------|
+| `.json` | JSON (parsed with `JSON.parse()`) |
+| `.yaml` | YAML (parsed with `js-yaml` using `JSON_SCHEMA` safe mode) |
+| `.yml` | YAML (parsed with `js-yaml` using `JSON_SCHEMA` safe mode) |
+
+Any other extension raises a `ConfigError` with code `CONFIG_INVALID_VALUE`.
+
+**Dependency:** The YAML support requires the `js-yaml` npm package (added as a project dependency).
+
+### Configuration Structure
+
+The root object must contain a `syncPairs` array with one or more sync pair entries. Each entry has four top-level fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier for the sync pair. Must be unique across all pairs in the file. Used in logs, results, and token expiry warnings. |
+| `platform` | string | Yes | Source platform discriminator. Must be `"github"` or `"azure-devops"`. |
+| `source` | object | Yes | Source repository configuration. Structure depends on `platform`. |
+| `destination` | object | Yes | Azure Storage destination configuration. |
+
+### Destination Fields
+
+All destination fields are the same regardless of platform.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `accountUrl` | string | Yes | Azure Storage account URL (e.g., `https://myaccount.blob.core.windows.net`). |
+| `container` | string | Yes | Container name in the storage account. |
+| `folder` | string | **Yes** | Destination folder path within the container. **This field is required with no default value.** Explicit routing prevents accidental overwrites at the container root. Use `"/"` to write to the container root. |
+| `sasToken` | string | Yes | SAS token for authenticating to the storage account (no leading `?`). Must have Write and Create permissions on the container. |
+| `sasTokenExpiry` | string | No | SAS token expiry in ISO 8601 format (e.g., `2026-12-31T00:00:00Z`). When set, the tool warns 7 days before expiry. |
+
+**How to obtain `sasToken`:**
+
+Generate via Azure CLI:
+```bash
+az storage container generate-sas \
+  --account-name <account> \
+  --name <container> \
+  --permissions rwdlac \
+  --expiry 2027-12-31 \
+  --output tsv
+```
+
+Or via Azure Portal: Storage Account > Shared access signature (select Read, Write, Delete, List, Add, Create permissions).
+
+### GitHub Source Fields
+
+Used when `platform` is `"github"`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `repo` | string | Yes | GitHub repository in `owner/repo` format (e.g., `microsoft/typescript`). |
+| `ref` | string | No | Branch name, tag, or commit SHA. If omitted, the repository's default branch is used. |
+| `token` | string | No | GitHub Personal Access Token. Optional for public repositories, required for private repositories. Must have `repo` scope for private repos. |
+| `tokenExpiry` | string | No | Token expiry in ISO 8601 format. When set, the tool warns 7 days before expiry. |
+
+### Azure DevOps Source Fields
+
+Used when `platform` is `"azure-devops"`. DevOps sync pairs use **PAT authentication only** (no azure-ad). Azure AD uses machine-level DefaultAzureCredential, which is not a per-pair credential and would be semantically misleading in a per-pair config.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `organization` | string | Yes | Azure DevOps organization name. |
+| `project` | string | Yes | Project name. |
+| `repository` | string | Yes | Repository name or GUID. |
+| `ref` | string | No | Version identifier (branch name, tag, or commit SHA). If omitted, the default branch is used. |
+| `versionType` | string | No | How to interpret `ref`: `"branch"`, `"tag"`, or `"commit"`. Defaults to `"branch"`. |
+| `resolveLfs` | boolean | No | Whether to resolve LFS pointers. Defaults to `false`. |
+| `pat` | string | **Yes** | Personal Access Token with Code Read scope. Required for all DevOps sync pairs (PAT-only auth). |
+| `patExpiry` | string | No | PAT expiry in ISO 8601 format. When set, the tool warns 7 days before expiry. |
+| `orgUrl` | string | No | Organization URL override (e.g., `https://dev.azure.com/myorg`). If not set, constructed from the organization name. |
+
+### Token Expiry Checking
+
+Before processing begins, all token expiry dates in the configuration are checked using the `checkTokenExpiry()` utility:
+
+- **Expired tokens** cause an immediate error, halting processing for that pair.
+- **Tokens expiring within 7 days** produce a warning log message.
+- Each warning is prefixed with `sync:<pairName>:<tokenType>` for easy identification (e.g., `sync:my-github-repo:GITHUB_TOKEN`).
+
+The following tokens are checked per pair:
+- GitHub pairs: `source.tokenExpiry` (only if `source.token` is present)
+- DevOps pairs: `source.patExpiry`
+- All pairs: `destination.sasTokenExpiry`
+
+### Complete Example: JSON Format
+
+```json
+{
+  "syncPairs": [
+    {
+      "name": "typescript-repo",
+      "platform": "github",
+      "source": {
+        "repo": "microsoft/typescript",
+        "ref": "main",
+        "token": "ghp_xxxxxxxxxxxxxxxxxxxx",
+        "tokenExpiry": "2026-12-31T00:00:00Z"
+      },
+      "destination": {
+        "accountUrl": "https://myaccount.blob.core.windows.net",
+        "container": "repos",
+        "folder": "github/typescript",
+        "sasToken": "sv=2022-11-02&ss=b&srt=co&sp=rwdlacyx&se=2027-01-01T00:00:00Z&st=2026-01-01T00:00:00Z&spr=https&sig=xxxxx",
+        "sasTokenExpiry": "2027-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "internal-api",
+      "platform": "azure-devops",
+      "source": {
+        "organization": "myorg",
+        "project": "platform",
+        "repository": "internal-api",
+        "ref": "release/v2",
+        "versionType": "branch",
+        "pat": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "patExpiry": "2026-06-30T00:00:00Z",
+        "orgUrl": "https://dev.azure.com/myorg"
+      },
+      "destination": {
+        "accountUrl": "https://myaccount.blob.core.windows.net",
+        "container": "repos",
+        "folder": "devops/internal-api",
+        "sasToken": "sv=2022-11-02&ss=b&srt=co&sp=rwdlacyx&se=2027-01-01T00:00:00Z&st=2026-01-01T00:00:00Z&spr=https&sig=xxxxx",
+        "sasTokenExpiry": "2027-01-01T00:00:00Z"
+      }
+    }
+  ]
+}
+```
+
+### Complete Example: YAML Format
+
+```yaml
+syncPairs:
+  - name: typescript-repo
+    platform: github
+    source:
+      repo: microsoft/typescript
+      ref: main
+      token: ghp_xxxxxxxxxxxxxxxxxxxx
+      tokenExpiry: "2026-12-31T00:00:00Z"
+    destination:
+      accountUrl: https://myaccount.blob.core.windows.net
+      container: repos
+      folder: github/typescript
+      sasToken: "sv=2022-11-02&ss=b&srt=co&sp=rwdlacyx&se=2027-01-01T00:00:00Z&st=2026-01-01T00:00:00Z&spr=https&sig=xxxxx"
+      sasTokenExpiry: "2027-01-01T00:00:00Z"
+
+  - name: internal-api
+    platform: azure-devops
+    source:
+      organization: myorg
+      project: platform
+      repository: internal-api
+      ref: release/v2
+      versionType: branch
+      pat: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      patExpiry: "2026-06-30T00:00:00Z"
+      orgUrl: https://dev.azure.com/myorg
+    destination:
+      accountUrl: https://myaccount.blob.core.windows.net
+      container: repos
+      folder: devops/internal-api
+      sasToken: "sv=2022-11-02&ss=b&srt=co&sp=rwdlacyx&se=2027-01-01T00:00:00Z&st=2026-01-01T00:00:00Z&spr=https&sig=xxxxx"
+      sasTokenExpiry: "2027-01-01T00:00:00Z"
+```
+
+### Recommended Management
+
+- **Never commit sync pair config files to version control** -- they contain secrets (PAT tokens, SAS tokens).
+- Add `sync-pairs.json`, `sync-pairs.yaml`, `sync-pairs.yml` to `.gitignore`.
+- For CI/CD, generate the config file dynamically from pipeline secrets or use the API endpoint with the configuration passed in the request body.
+- Use short-lived tokens and always set expiry fields for proactive warnings.
+- Keep separate config files per environment (dev, staging, prod) with different storage targets and credentials.
+
+---
+
 ## Docker Deployment Configuration
 
-When running the API in a Docker container, all configuration must be provided via environment variables. The config file (`.azure-fs.json`) is excluded from the image by `.dockerignore`.
+When running the API in a Docker container, all configuration must be provided via environment variables. The config file (`.repo-sync.json`) is excluded from the image by `.dockerignore`.
 
 ### Setup
 

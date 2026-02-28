@@ -4,7 +4,7 @@ export {
   RetryStrategy,
   ConfigSourceLabel,
   ConfigSourceTracker,
-  AzureFsConfigFile,
+  RepoSyncConfigFile,
   CliOptions,
   ResolvedConfig,
 } from "./config.types";
@@ -24,39 +24,29 @@ export {
 export {
   ConfigErrorCode,
   AuthErrorCode,
-  BlobErrorCode,
-  PathErrorCode,
-  MetadataErrorCode,
   NetworkErrorCode,
   GeneralErrorCode,
+  RepoErrorCode,
 } from "./errors.types";
 
 export {
-  FileInfo,
-  UploadResult,
-  DownloadResult,
-  DeleteResult,
-  ExistsResult,
-  ListItem,
-  CreateFolderResult,
-  ListFolderResult,
-  DeleteFolderResult,
-  UploadDirectoryResult,
-  UploadDirectoryFileResult,
-} from "./filesystem.types";
-
-export {
-  MetadataResult,
-  TagResult,
-  TagQueryResult,
-  TagQueryMatch,
-} from "./metadata.types";
-
-export {
-  PatchInstruction,
-  PatchInstructionResult,
-  PatchResult,
-  EditResult,
-  EditUploadResult,
-  AppendResult,
-} from "./patch.types";
+  RepoPlatform,
+  DevOpsVersionType,
+  DevOpsAuthMethod,
+  GitHubRepoParams,
+  DevOpsRepoParams,
+  RepoFileUploadResult,
+  RepoReplicationResult,
+  GitHubRepoInfo,
+  GitHubRepoConfig,
+  DevOpsRepoConfig,
+  SyncPairDestination,
+  GitHubSyncPairSource,
+  DevOpsSyncPairSource,
+  GitHubSyncPair,
+  DevOpsSyncPair,
+  SyncPair,
+  SyncPairConfig,
+  SyncPairItemResult,
+  SyncPairBatchResult,
+} from "./repo-replication.types";

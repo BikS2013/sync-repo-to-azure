@@ -47,6 +47,28 @@ export function createContainerClient(config: ResolvedConfig): ContainerClient {
 }
 
 /**
+ * Create a ContainerClient for a sync pair destination using SAS token authentication.
+ *
+ * Unlike createContainerClient() which uses the global ResolvedConfig,
+ * this function accepts explicit per-pair storage parameters.
+ * Sync pairs always authenticate with SAS tokens.
+ *
+ * @param accountUrl - Azure Storage account URL
+ * @param containerName - Container name
+ * @param sasToken - SAS token (no leading "?")
+ * @returns ContainerClient for the specified container
+ */
+export function createSyncPairContainerClient(
+  accountUrl: string,
+  containerName: string,
+  sasToken: string,
+): ContainerClient {
+  const separator = accountUrl.includes("?") ? "&" : "?";
+  const serviceClient = new BlobServiceClient(`${accountUrl}${separator}${sasToken}`);
+  return serviceClient.getContainerClient(containerName);
+}
+
+/**
  * Validate the connection by attempting to check if the configured container exists.
  */
 export async function validateConnection(

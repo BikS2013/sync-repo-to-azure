@@ -9,7 +9,7 @@ import {
   formatErrorFromException,
   outputResult,
 } from "../utils/output.utils";
-import { CliOptions, AuthMethod, AzureFsConfigFile } from "../types/config.types";
+import { CliOptions, AuthMethod, RepoSyncConfigFile } from "../types/config.types";
 import { exitCodeForError } from "../utils/exit-codes.utils";
 
 /**
@@ -23,7 +23,7 @@ export function registerConfigCommands(program: Command): void {
   // --- config init ---
   configCmd
     .command("init")
-    .description("Create a .azure-fs.json configuration file interactively")
+    .description("Create a .repo-sync.json configuration file interactively")
     .option("--path <path>", "Output path for the config file")
     .action(async (options, cmd) => {
       const startTime = Date.now();
@@ -117,7 +117,7 @@ export function registerConfigCommands(program: Command): void {
  */
 async function interactiveConfigInit(
   outputPath?: string,
-): Promise<{ path: string; config: AzureFsConfigFile }> {
+): Promise<{ path: string; config: RepoSyncConfigFile }> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stderr, // Prompts to stderr, keep stdout for JSON output
@@ -132,8 +132,8 @@ async function interactiveConfigInit(
   };
 
   try {
-    process.stderr.write("\nAzure Blob Storage File System CLI - Configuration Setup\n");
-    process.stderr.write("=".repeat(58) + "\n\n");
+    process.stderr.write("\nRepo Sync - Configuration Setup\n");
+    process.stderr.write("=".repeat(32) + "\n\n");
 
     // Storage settings
     const accountUrl = await ask(
@@ -172,7 +172,7 @@ async function interactiveConfigInit(
       maxDelayMs = Number(maxDelayInput);
     }
 
-    const storageConfig: AzureFsConfigFile["storage"] = {
+    const storageConfig: RepoSyncConfigFile["storage"] = {
       accountUrl,
       containerName,
       authMethod,
@@ -182,14 +182,14 @@ async function interactiveConfigInit(
       storageConfig!.sasTokenExpiry = sasTokenExpiry;
     }
 
-    const config: AzureFsConfigFile = {
+    const config: RepoSyncConfigFile = {
       storage: storageConfig,
       logging: {
-        level: logLevel as AzureFsConfigFile["logging"] extends { level: infer L } ? L : never,
+        level: logLevel as RepoSyncConfigFile["logging"] extends { level: infer L } ? L : never,
         logRequests,
       },
       retry: {
-        strategy: retryStrategy as AzureFsConfigFile["retry"] extends { strategy: infer S } ? S : never,
+        strategy: retryStrategy as RepoSyncConfigFile["retry"] extends { strategy: infer S } ? S : never,
         maxRetries,
         initialDelayMs,
         maxDelayMs,
@@ -198,7 +198,7 @@ async function interactiveConfigInit(
 
     const filePath = outputPath
       ? path.resolve(outputPath)
-      : path.join(process.cwd(), ".azure-fs.json");
+      : path.join(process.cwd(), ".repo-sync.json");
 
     fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 

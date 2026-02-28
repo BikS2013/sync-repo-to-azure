@@ -1,5 +1,6 @@
 import { AuthMethod, LogLevel, ResolvedConfig, RetryStrategy } from "../types/config.types";
 import { ApiConfig, NodeEnvironment } from "../types/api-config.types";
+import { DevOpsAuthMethod } from "../types/repo-replication.types";
 import { ConfigError } from "../errors/config.error";
 
 const VALID_AUTH_METHODS: AuthMethod[] = ["connection-string", "sas-token", "azure-ad"];
@@ -17,7 +18,6 @@ export function validateConfig(merged: Record<string, unknown>): ResolvedConfig 
   const storage = (merged["storage"] as Record<string, unknown>) || {};
   const logging = (merged["logging"] as Record<string, unknown>) || {};
   const retry = (merged["retry"] as Record<string, unknown>) || {};
-  const batch = (merged["batch"] as Record<string, unknown>) || {};
 
   // --- Storage section ---
   if (!storage["accountUrl"]) {
@@ -175,25 +175,6 @@ export function validateConfig(merged: Record<string, unknown>): ResolvedConfig 
     }
   }
 
-  // --- Batch section ---
-  if (batch["concurrency"] === undefined || batch["concurrency"] === null) {
-    throw ConfigError.missingRequired(
-      "batch.concurrency",
-      "(not available as CLI flag, use env var or config file)",
-      "export AZURE_FS_BATCH_CONCURRENCY=10",
-      '{ "batch": { "concurrency": 10 } }',
-    );
-  }
-
-  const batchConcurrency = Number(batch["concurrency"]);
-  if (isNaN(batchConcurrency) || batchConcurrency < 1) {
-    throw ConfigError.invalidValue(
-      "batch.concurrency",
-      batch["concurrency"],
-      ["positive integer (e.g., 5, 10, 20)"],
-    );
-  }
-
   // Build the validated config object
   const resolvedConfig: ResolvedConfig = {
     storage: {
@@ -211,13 +192,45 @@ export function validateConfig(merged: Record<string, unknown>): ResolvedConfig 
       initialDelayMs: retryStrategy === "none" ? 0 : Number(retry["initialDelayMs"]),
       maxDelayMs: retryStrategy === "none" ? 0 : Number(retry["maxDelayMs"]),
     },
-    batch: {
-      concurrency: batchConcurrency,
-    },
   };
 
   if (sasTokenExpiry) {
     resolvedConfig.storage.sasTokenExpiry = sasTokenExpiry;
+  }
+
+  // --- GitHub section (optional, loaded lazily from env vars) ---
+  const github = (merged["github"] as Record<string, unknown>) || {};
+  if (github["token"] || github["tokenExpiry"]) {
+    resolvedConfig.github = {};
+    if (github["token"]) {
+      resolvedConfig.github.token = github["token"] as string;
+    }
+    if (github["tokenExpiry"]) {
+      resolvedConfig.github.tokenExpiry = github["tokenExpiry"] as string;
+    }
+  }
+
+  // --- DevOps section (optional, loaded lazily from env vars / config file) ---
+  const devops = (merged["devops"] as Record<string, unknown>) || {};
+  if (devops["pat"] || devops["patExpiry"] || devops["authMethod"] || devops["orgUrl"]) {
+    resolvedConfig.devops = {};
+    if (devops["pat"]) {
+      resolvedConfig.devops.pat = devops["pat"] as string;
+    }
+    if (devops["patExpiry"]) {
+      resolvedConfig.devops.patExpiry = devops["patExpiry"] as string;
+    }
+    if (devops["authMethod"]) {
+      const devopsAuth = devops["authMethod"] as string;
+      const validDevOpsAuthMethods: DevOpsAuthMethod[] = ["pat", "azure-ad"];
+      if (!validDevOpsAuthMethods.includes(devopsAuth as DevOpsAuthMethod)) {
+        throw ConfigError.invalidValue("devops.authMethod", devopsAuth, validDevOpsAuthMethods);
+      }
+      resolvedConfig.devops.authMethod = devopsAuth as DevOpsAuthMethod;
+    }
+    if (devops["orgUrl"]) {
+      resolvedConfig.devops.orgUrl = devops["orgUrl"] as string;
+    }
   }
 
   return resolvedConfig;
@@ -315,25 +328,6 @@ export function validateApiConfig(api: Record<string, unknown>): ApiConfig {
 
   const swaggerEnabled = api["swaggerEnabled"] as boolean;
 
-  // --- uploadMaxSizeMb ---
-  if (api["uploadMaxSizeMb"] === undefined || api["uploadMaxSizeMb"] === null) {
-    throw ConfigError.missingRequired(
-      "api.uploadMaxSizeMb",
-      "(not available as CLI flag, use env var or config file)",
-      "export AZURE_FS_API_UPLOAD_MAX_SIZE_MB=100",
-      '{ "api": { "uploadMaxSizeMb": 100 } }',
-    );
-  }
-
-  const uploadMaxSizeMb = Number(api["uploadMaxSizeMb"]);
-  if (isNaN(uploadMaxSizeMb) || uploadMaxSizeMb <= 0) {
-    throw ConfigError.invalidValue(
-      "api.uploadMaxSizeMb",
-      api["uploadMaxSizeMb"],
-      ["positive number (e.g., 50, 100, 256)"],
-    );
-  }
-
   // --- requestTimeoutMs ---
   if (api["requestTimeoutMs"] === undefined || api["requestTimeoutMs"] === null) {
     throw ConfigError.missingRequired(
@@ -425,7 +419,6 @@ export function validateApiConfig(api: Record<string, unknown>): ApiConfig {
     host,
     corsOrigins,
     swaggerEnabled,
-    uploadMaxSizeMb,
     requestTimeoutMs,
     nodeEnv: nodeEnv as NodeEnvironment,
     autoSelectPort,

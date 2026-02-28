@@ -6,8 +6,8 @@ import cors from "cors";
 import * as http from "http";
 import { ApiResolvedConfig } from "../types/api-config.types";
 import { resolveApiConfig } from "../config/config.loader";
-import { BlobFileSystemService } from "../services/blob-filesystem.service";
-import { MetadataService } from "../services/metadata.service";
+import { RepoReplicationService } from "../services/repo-replication.service";
+import { createContainerClient } from "../services/auth.service";
 import { Logger } from "../utils/logger.utils";
 import { PortChecker } from "../utils/port-checker.utils";
 import swaggerUi from "swagger-ui-express";
@@ -24,18 +24,15 @@ import { ConsoleCommands } from "../utils/console-commands.utils";
  * Exported separately so it can be used in tests.
  *
  * @param config - The fully resolved API configuration.
- * @param blobService - Shared blob filesystem service instance.
- * @param metadataService - Shared metadata service instance.
  * @param logger - Application logger.
  * @param actualPort - Optional override port (when PortChecker auto-selected a different port).
  */
 export function createApp(
   config: ApiResolvedConfig,
-  blobService: BlobFileSystemService,
-  metadataService: MetadataService,
   logger: Logger,
   actualPort?: number,
   consoleCommands?: ConsoleCommands,
+  repoReplicationService?: RepoReplicationService,
 ): Express {
   const app = express();
 
@@ -49,7 +46,7 @@ export function createApp(
     }),
   );
 
-  // 2. JSON body parser (multipart uploads bypass this; they use multer)
+  // 2. JSON body parser
   app.use(express.json({ limit: "10mb" }));
 
   // 3. Request logger (logs method, URL, status code, duration -- never bodies)
@@ -69,12 +66,11 @@ export function createApp(
 
   // 6. Routes (includes 404 catch-all at the end)
   const services: ApiServices = {
-    blobService,
-    metadataService,
     config,
     logger,
     sourceTracker: config.sourceTracker,
     consoleCommands,
+    repoReplicationService,
   };
   registerApiRoutes(app, services);
 
@@ -120,7 +116,13 @@ export async function startServer(): Promise<void> {
       process.stderr.write(`azure-venv authentication error (SAS token expired or invalid): ${(error as Error).message}\n`);
       process.exit(2);
     }
-    throw error;
+    // Module not found = azure-venv not installed or not built; skip silently
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    if (errorCode === "MODULE_NOT_FOUND" || errorCode === "ERR_MODULE_NOT_FOUND") {
+      // azure-venv package not available — continue without remote config sync
+    } else {
+      throw error;
+    }
   }
 
   // 1. Load and validate all configuration (base + API section)
@@ -129,9 +131,9 @@ export async function startServer(): Promise<void> {
   // 2. Create logger
   const logger = new Logger(config.logging.level, false);
 
-  // 3. Create shared service instances (one-time creation, reused across all requests)
-  const blobService = new BlobFileSystemService(config, logger);
-  const metadataService = new MetadataService(config, logger);
+  // 3. Create repo replication service (uses ContainerClient from auth.service)
+  const containerClient = createContainerClient(config);
+  const repoReplicationService = new RepoReplicationService(config, containerClient, logger);
 
   // 4. Check port availability (proactive port check)
   let actualPort = config.api.port;
@@ -174,11 +176,10 @@ export async function startServer(): Promise<void> {
   // 6. Create Express app (pass actualPort only when it differs from configured port)
   const app = createApp(
     config,
-    blobService,
-    metadataService,
     logger,
     actualPort !== config.api.port ? actualPort : undefined,
     consoleCommands ?? undefined,
+    repoReplicationService,
   );
 
   // 7. Start HTTP server
@@ -197,7 +198,7 @@ export async function startServer(): Promise<void> {
   server.listen(actualPort, config.api.host, () => {
     const serverUrl = `http://${config.api.host}:${actualPort}`;
 
-    logger.info(`Azure FS API server started`, {
+    logger.info(`Repo Sync API server started`, {
       url: serverUrl,
       healthUrl: `${serverUrl}/api/health`,
       docsUrl: config.api.swaggerEnabled ? `${serverUrl}/api/docs` : "(disabled)",
@@ -205,7 +206,7 @@ export async function startServer(): Promise<void> {
     });
 
     // Also output to stdout for visibility
-    process.stdout.write(`\nAzure FS API server listening on ${serverUrl}\n`);
+    process.stdout.write(`\nRepo Sync API server listening on ${serverUrl}\n`);
     process.stdout.write(`  Health:    ${serverUrl}/api/health\n`);
     process.stdout.write(`  Readiness: ${serverUrl}/api/health/ready\n`);
     if (config.api.swaggerEnabled) {

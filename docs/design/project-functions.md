@@ -1,8 +1,8 @@
-# Azure Blob Storage File System CLI Tool - Functional Requirements
+# Repository Sync Tool - Functional Requirements
 
-**Project Name**: azure-fs
-**Date**: 2026-02-22
-**Version**: 1.0.0
+**Project Name**: repo-sync
+**Date**: 2026-02-28
+**Version**: 2.0.0
 
 ---
 
@@ -18,7 +18,7 @@
 
 ### F1.1 Configuration File Loading (P0)
 
-**Description**: Load tool configuration from a JSON file (`.azure-fs.json`).
+**Description**: Load tool configuration from a JSON file (`.repo-sync.json`).
 
 **Inputs**:
 - Config file path (explicit via `--config` or auto-discovered at CWD/HOME)
@@ -27,7 +27,7 @@
 - Parsed `ResolvedConfig` object with all required fields
 
 **Behavior**:
-- Search order: `--config` path > CWD `.azure-fs.json` > HOME `.azure-fs.json`
+- Search order: `--config` path > CWD `.repo-sync.json` > HOME `.repo-sync.json`
 - Parse JSON content, validate all fields
 - Throw `ConfigError` with detailed message if file not found or malformed
 
@@ -97,13 +97,13 @@
 
 ### F1.5 Interactive Configuration Init (P1)
 
-**Description**: `azure-fs config init` -- interactively create a `.azure-fs.json` file.
+**Description**: `repo-sync config init` -- interactively create a `.repo-sync.json` file.
 
 **Inputs**:
 - User responses to interactive prompts (account URL, container name, auth method, logging, retry)
 
 **Outputs**:
-- `.azure-fs.json` file created in current directory
+- `.repo-sync.json` file created in current directory
 
 **Edge cases**:
 - File already exists -- prompt for overwrite confirmation
@@ -113,20 +113,20 @@
 
 ### F1.6 Configuration Display (P1)
 
-**Description**: `azure-fs config show` -- display the fully resolved configuration (with sensitive values masked).
+**Description**: `repo-sync config show` -- display the fully resolved configuration (with sensitive values masked).
 
 **Inputs**:
 - Resolved config from all sources
 
 **Outputs**:
 - JSON or human-readable display of all config values
-- Connection strings and SAS tokens shown as `***masked***`
+- Connection strings, SAS tokens, PATs shown as `***masked***`
 
 ---
 
 ### F1.7 Connection Validation (P0)
 
-**Description**: `azure-fs config validate` -- test the connection to Azure Storage.
+**Description**: `repo-sync config validate` -- test the connection to Azure Storage.
 
 **Inputs**:
 - Resolved config
@@ -207,596 +207,363 @@
 
 ---
 
-## 3. File Operations
+## 3. Repository Replication
 
-### F3.1 Upload File (P0)
+### F3.1 GitHub Repository Replication -- CLI (P1)
 
-**Description**: Upload a local file or string content to a blob path.
+**Description**: Replicate the complete file tree of a GitHub repository into an Azure Blob Storage folder via the CLI.
 
 **Inputs**:
-- `local`: Local file path
-- `remote`: Destination blob path
-- `--metadata key=value`: Optional metadata pairs
-- `--content-type`: Optional content type override
+- `--repo <owner/repo>` (required): GitHub repository in `owner/repo` format
+- `--dest <path>` (required): Destination folder path in Azure Blob Storage
+- `--ref <branch|tag|sha>` (optional): Git ref to replicate. If omitted, the default branch is used.
+- Environment variable `GITHUB_TOKEN` (optional for public repos, required for private repos): Personal Access Token for authentication
+- Environment variable `GITHUB_TOKEN_EXPIRY` (optional): ISO 8601 expiry date for proactive warning
 
 **Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "size": 1024,
-  "etag": "\"0x8D...\"",
-  "contentType": "text/plain",
-  "metadata": { "author": "john" }
-}
-```
+- `CommandResult<RepoReplicationResult>` containing:
+  - `platform`: "github"
+  - `source`: repository identifier
+  - `ref`: the actual ref that was replicated
+  - `destPath`: destination folder in Azure Blob Storage
+  - `totalFiles`: number of files discovered in the archive
+  - `successCount`: number of files successfully uploaded
+  - `failedCount`: number of files that failed to upload
+  - `totalBytes`: total bytes uploaded
+  - `downloadDurationMs`, `extractionDurationMs`, `uploadDurationMs`, `totalDurationMs`: timing breakdown
+  - `failedFiles`: per-file error details (only included when there are failures)
 
 **Behavior**:
-- Auto-detect content type from file extension if not specified
-- For files > 100 MB, use stream upload for memory efficiency
-- Set metadata on upload if provided
-- Overwrites existing blob by default
+1. Validate configuration: check `GITHUB_TOKEN` if needed, check token expiry
+2. If `--ref` is omitted, query GitHub API for the repository's default branch
+3. Download tarball archive via `GET /repos/{owner}/{repo}/tarball/{ref}` (single API call)
+4. Extract tarball to temporary directory using `tar` library with `strip: 1` (removes top-level `{owner}-{repo}-{sha}/` directory)
+5. Walk extracted directory recursively, building upload task list
+6. Upload all files to Azure Blob Storage using `parallelLimit` with configured concurrency (`batch.concurrency`)
+7. Clean up temporary files (archive and extraction directory)
+8. Return structured result
 
 **Edge cases**:
-- Local file does not exist -- `PathError` with file path
-- Remote path needs normalization (leading slash, backslashes)
-- Empty file (0 bytes) -- upload succeeds
-- Binary file -- content type set to `application/octet-stream`
-- Very long blob name (> 1024 chars) -- validation error
-- Metadata key with invalid characters -- `MetadataError` before upload attempt
+- Repository does not exist or is not accessible: throw `RepoReplicationError` with `REPO_NOT_FOUND` code, exit code 1
+- `GITHUB_TOKEN` missing for private repository: throw `ConfigError` with instructions, exit code 2
+- `GITHUB_TOKEN_EXPIRY` is set and token is expired: throw `ConfigError`, exit code 2
+- `GITHUB_TOKEN_EXPIRY` is set and token expires within 7 days: log warning, proceed normally
+- Rate limit exceeded (403 with `X-RateLimit-Remaining: 0`): throw `RepoReplicationError` with helpful message about setting `GITHUB_TOKEN`
+- Archive contains path traversal entries (`../`): skip those entries with warning log
+- Some individual file uploads fail: record failures in result, continue with remaining files, do not abort
+- Large repository exhausts temp disk space: operation fails with OS-level error; document disk space requirement (2x repo size)
+- Git LFS files: only pointer files are included (GitHub limitation); document this clearly
+- Submodules: only pointer files (`.gitmodules`) are included; document this clearly
+- Empty directories: not preserved (git limitation, not present in tarball)
 
 ---
 
-### F3.2 Download File (P0)
+### F3.2 Azure DevOps Repository Replication -- CLI (P1)
 
-**Description**: Download a blob to a local file or return content as string.
+**Description**: Replicate the complete file tree of an Azure DevOps Git repository into an Azure Blob Storage folder via the CLI.
 
 **Inputs**:
-- `remote`: Source blob path
-- `[local]`: Optional local file destination (if omitted, content returned in JSON output)
+- `--org <organization>` (required): Azure DevOps organization name
+- `--project <project>` (required): Project name
+- `--repo <repository>` (required): Repository name or GUID
+- `--dest <path>` (required): Destination folder path in Azure Blob Storage
+- `--ref <branch|tag|sha>` (optional): Version identifier. If omitted, the default branch is used.
+- `--version-type <branch|tag|commit>` (optional): How to interpret `--ref`. Default: `branch`.
+- `--resolve-lfs` (optional flag): Resolve LFS pointers to actual content
+- Environment variable `AZURE_DEVOPS_AUTH_METHOD` (required): `pat` or `azure-ad`
+- Environment variable `AZURE_DEVOPS_PAT` (required when auth method is `pat`): Personal Access Token
+- Environment variable `AZURE_DEVOPS_PAT_EXPIRY` (optional): ISO 8601 expiry date for proactive warning
 
 **Outputs**:
-- If `local` provided: `{ path, localPath, size, contentType, etag }`
-- If `local` omitted: `{ path, content, size, contentType, etag }`
+- `CommandResult<RepoReplicationResult>` with same structure as F3.1, with `platform: "azure-devops"`
 
 **Behavior**:
-- If local path provided, write to file (streaming for large files)
-- If local path omitted, download to string and include in JSON output
-- Include metadata and system properties in response
+1. Validate configuration: check auth method, check PAT if method is `pat`, check token expiry
+2. Build Items API URL with `$format=zip`, `recursionLevel=Full`, `zipForUnix=true`, and optional `resolveLfs=true`
+3. Authenticate using PAT (Basic auth) or Azure AD (`DefaultAzureCredential` with DevOps scope `499b84ac-1321-427f-aa17-267ca6975798/.default`)
+4. Download zip archive to temporary file (single HTTP request)
+5. Extract zip to temporary directory using `extract-zip`
+6. Walk extracted directory recursively, building upload task list
+7. Upload all files to Azure Blob Storage using `parallelLimit` with configured concurrency
+8. Clean up temporary files
+9. Return structured result
 
 **Edge cases**:
-- Blob does not exist -- `BlobNotFoundError`
-- Local directory for destination does not exist -- create parent directories
-- File > 100 MB without local path -- warn about large content in JSON output
-- Binary content without local path -- return base64-encoded content or error
+- Repository does not exist (404): throw `RepoReplicationError` with `REPO_NOT_FOUND` code, exit code 1
+- `AZURE_DEVOPS_AUTH_METHOD` not set: throw `ConfigError` with instructions, exit code 2
+- `AZURE_DEVOPS_PAT` missing when auth method is `pat`: throw `ConfigError`, exit code 2
+- `AZURE_DEVOPS_PAT_EXPIRY` set and token expired: throw `ConfigError`, exit code 2
+- `AZURE_DEVOPS_PAT_EXPIRY` set and token expires within 7 days: log warning, proceed
+- TSTU throttling (429 with `Retry-After`): honor `Retry-After` header and retry
+- Authentication failure (401/403): throw with auth-specific message
+- Path traversal in zip entries: skip with warning log
+- Individual file upload failures: record in result, do not abort
+- LFS resolution: when `--resolve-lfs` is set, `resolveLfs=true` is passed to the API; LFS pointer files are replaced with actual content
+- Submodules: not included in zip archive; document this limitation
+- Legacy Azure DevOps URL format (`{org}.visualstudio.com`): not supported; only `dev.azure.com/{org}` format
 
 ---
 
-### F3.3 Delete File (P0)
+### F3.3 GitHub Repository Replication -- API (P1)
 
-**Description**: Delete a single blob.
-
-**Inputs**:
-- `remote`: Blob path to delete
-- `--force`: Skip confirmation (for non-interactive use)
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "deleted": true,
-  "existed": true
-}
-```
-
-**Edge cases**:
-- Blob does not exist -- `existed: false`, `deleted: false` (not an error with `deleteIfExists`)
-- Path points to a folder marker -- delete it as a regular blob
-- Blob has snapshots -- delete with `deleteSnapshots: 'include'`
-
----
-
-### F3.4 Replace File (P0)
-
-**Description**: Replace the content of an existing blob. Fails if blob does not exist.
+**Description**: Replicate a GitHub repository into Azure Blob Storage via the REST API.
 
 **Inputs**:
-- `local`: New content source (local file path)
-- `remote`: Blob path to replace
-- `--metadata key=value`: Optional new metadata
+- HTTP `POST /api/v1/repo/github`
+- Request body (JSON):
+  - `repo` (string, required): GitHub repository in `owner/repo` format
+  - `ref` (string, optional): Branch, tag, or commit SHA
+  - `destPath` (string, required): Destination folder in Azure Blob Storage
 
 **Outputs**:
-- Same as upload result
+- HTTP 200 with `RepoReplicationResult` in standard response envelope (`success`, `data`, `metadata`)
 
 **Behavior**:
-- Check blob exists before uploading
-- Use ETag-based conditional write to prevent race conditions
-- If blob does not exist, throw `BlobNotFoundError` (unlike upload which creates)
+- Same as F3.1 but triggered via HTTP POST instead of CLI
+- Controller extracts parameters from request body, calls `RepoReplicationService.replicateGitHub()`
+- A longer per-route timeout (5 minutes / 300000ms) is applied to repo replication endpoints to accommodate large repositories
+- Response includes timing breakdown for observability
 
 **Edge cases**:
-- Blob modified between exists check and upload -- 412 Precondition Failed; retry per config
-- Blob deleted between exists check and upload -- 404 error
+- Missing required fields (`repo`, `destPath`): return HTTP 400 with `REPO_MISSING_PARAMS` error code
+- Authentication failure: return HTTP 401 with `REPO_AUTH_MISSING`
+- Repository not found: return HTTP 404 with `REPO_NOT_FOUND`
+- Operation timeout: return HTTP 408 with `REQUEST_TIMEOUT`
+- Internal error (archive/extraction/upload): return HTTP 500 with `REPO_REPLICATION_ERROR`
 
 ---
 
-### F3.5 File Exists (P0)
+### F3.4 Azure DevOps Repository Replication -- API (P1)
 
-**Description**: Check if a blob exists at the given path.
-
-**Inputs**:
-- `path`: Blob path to check
-- `--type file|folder`: Narrow the check to file or folder
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "exists": true,
-  "type": "file"
-}
-```
-
-**Edge cases**:
-- Path matches a folder marker blob -- `type: "folder"` if checking without `--type` filter
-- Empty path (root) -- always returns `exists: true, type: "folder"`
-
----
-
-### F3.6 File Info (P0)
-
-**Description**: Get detailed properties and metadata for a blob.
+**Description**: Replicate an Azure DevOps repository into Azure Blob Storage via the REST API.
 
 **Inputs**:
-- `remote`: Blob path
-- `--include-tags`: Also fetch blob index tags
+- HTTP `POST /api/v1/repo/devops`
+- Request body (JSON):
+  - `organization` (string, required): Azure DevOps organization name
+  - `project` (string, required): Project name
+  - `repository` (string, required): Repository name or GUID
+  - `ref` (string, optional): Version identifier
+  - `versionType` (string, optional): `branch`, `tag`, or `commit` (default: `branch`)
+  - `destPath` (string, required): Destination folder in Azure Blob Storage
+  - `resolveLfs` (boolean, optional): Resolve LFS pointers (default: false)
 
 **Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "size": 1024,
-  "contentType": "text/plain",
-  "contentEncoding": "utf-8",
-  "lastModified": "2026-02-22T10:30:00Z",
-  "etag": "\"0x8D...\"",
-  "metadata": { "author": "john" },
-  "tags": { "env": "prod" }
-}
-```
-
-**Edge cases**:
-- Blob does not exist -- `BlobNotFoundError`
-- Tags not requested -- `tags` field omitted from output
-- Blob has no metadata -- `metadata: {}`
-
----
-
-## 4. Folder Operations
-
-### F4.1 Create Folder (P0)
-
-**Description**: Create a virtual directory using a zero-byte marker blob.
-
-**Inputs**:
-- `path`: Folder path to create
-
-**Outputs**:
-```json
-{
-  "path": "docs/projects/",
-  "created": true
-}
-```
+- HTTP 200 with `RepoReplicationResult` in standard response envelope
 
 **Behavior**:
-- Normalize path and ensure it ends with `/`
-- Upload zero-byte blob with `contentType: 'application/x-directory'` and `metadata: { hdi_isfolder: 'true' }`
+- Same as F3.2 but triggered via HTTP POST instead of CLI
+- Controller extracts parameters from request body, calls `RepoReplicationService.replicateDevOps()`
+- A longer per-route timeout (5 minutes / 300000ms) is applied
+- Response includes timing breakdown
 
 **Edge cases**:
-- Folder already exists (marker blob present) -- `created: false` (not an error)
-- Nested path where parent doesn't exist -- create only the requested folder (parent created implicitly when child has content)
-- Path does not end with `/` -- normalize to add trailing slash
+- Missing required fields (`organization`, `project`, `repository`, `destPath`): return HTTP 400 with `REPO_MISSING_PARAMS`
+- Authentication failure: return HTTP 401 with `REPO_AUTH_MISSING`
+- Repository not found: return HTTP 404 with `REPO_NOT_FOUND`
+- Operation timeout: return HTTP 408 with `REQUEST_TIMEOUT`
+- Internal error: return HTTP 500 with `REPO_REPLICATION_ERROR`
 
 ---
 
-### F4.2 List Folder (P0)
+### F3.5 Repo Replication Configuration -- GitHub (P1)
 
-**Description**: List files and subfolders at a given path level.
+**Description**: Configuration parameters for GitHub repository replication.
 
 **Inputs**:
-- `path`: Folder path (prefix) to list
-- `--recursive`: List all items recursively
-- `--include-metadata`: Include metadata for each item
+- Environment variable `GITHUB_TOKEN` (secret, never in config file)
+- Environment variable `GITHUB_TOKEN_EXPIRY` (optional, also settable in config file as `github.tokenExpiry`)
+- Existing `batch.concurrency` controls upload parallelism
 
 **Outputs**:
-```json
-{
-  "path": "docs/",
-  "items": [
-    { "name": "projects/", "fullPath": "docs/projects/", "type": "folder" },
-    { "name": "readme.txt", "fullPath": "docs/readme.txt", "type": "file", "size": 1024, "lastModified": "..." }
-  ],
-  "totalItems": 2
-}
-```
+- Validated auth context for GitHub API access
 
 **Behavior**:
-- Non-recursive: Use `listBlobsByHierarchy('/', { prefix })` for one-level listing
-- Recursive: Use `listBlobsFlat({ prefix })` for all nested items
-- Extract relative names by removing the prefix
-- Filter out folder marker blobs from file results (they appear as `type: "folder"`)
+- `GITHUB_TOKEN` is read from environment variables only (never from config file, as it is a secret)
+- `GITHUB_TOKEN_EXPIRY`, when set, is checked before each replication:
+  - Expired: throw `ConfigError`
+  - Within 7 days: log warning
+- For public repositories, `GITHUB_TOKEN` is optional (unauthenticated access at 60 req/hr limit)
+- For private repositories, `GITHUB_TOKEN` is required; its absence throws `ConfigError`
+- No fallback values: if the token is needed and missing, the operation fails immediately
 
 **Edge cases**:
-- Empty folder -- return empty items array (folder marker exists but no children)
-- Root listing (empty path) -- list everything at the top level
-- Path without trailing slash -- add it before listing
-- Thousands of items -- paginate internally (SDK handles this), return complete list
-- Include metadata flag -- adds `metadata` field to each item
+- `GITHUB_TOKEN_EXPIRY` is set but `GITHUB_TOKEN` is not: no validation needed (expiry only matters if token is present)
+- `GITHUB_TOKEN_EXPIRY` is not a valid ISO 8601 date: throw `ConfigError`
+- Token present but repo is public: token is used anyway (higher rate limit)
 
 ---
 
-### F4.3 Delete Folder (P0)
+### F3.6 Repo Replication Configuration -- Azure DevOps (P1)
 
-**Description**: Recursively delete all blobs under a folder prefix.
+**Description**: Configuration parameters for Azure DevOps repository replication.
 
 **Inputs**:
-- `path`: Folder path to delete
-- `--force`: Skip confirmation
+- Environment variable `AZURE_DEVOPS_AUTH_METHOD` (required when using DevOps replication): `pat` or `azure-ad`
+- Environment variable `AZURE_DEVOPS_PAT` (secret, required when auth method is `pat`)
+- Environment variable `AZURE_DEVOPS_PAT_EXPIRY` (optional)
+- Environment variable `AZURE_DEVOPS_ORG_URL` (optional, overrides derived org URL)
 
 **Outputs**:
-```json
-{
-  "path": "docs/projects/",
-  "deletedCount": 15,
-  "deletedItems": ["docs/projects/", "docs/projects/file1.txt", "..."]
-}
-```
+- Validated auth context for Azure DevOps API access
 
 **Behavior**:
-- List all blobs with `listBlobsFlat({ prefix })`
-- Delete each blob including the folder marker
-- Return count and list of deleted items
+- `AZURE_DEVOPS_AUTH_METHOD` must be explicitly set; its absence throws `ConfigError` when DevOps replication is attempted
+- When method is `pat`:
+  - `AZURE_DEVOPS_PAT` must be set; its absence throws `ConfigError`
+  - Auth header: `Authorization: Basic ${base64(':' + PAT)}`
+- When method is `azure-ad`:
+  - Uses `DefaultAzureCredential` from `@azure/identity` with scope `499b84ac-1321-427f-aa17-267ca6975798/.default`
+  - No additional env vars required beyond standard Azure Identity variables
+- `AZURE_DEVOPS_PAT_EXPIRY` follows the same pattern as `GITHUB_TOKEN_EXPIRY`
+- `AZURE_DEVOPS_ORG_URL`, when set, overrides the derived URL `https://dev.azure.com/{org}`
 
 **Edge cases**:
-- Folder does not exist (no blobs with prefix) -- `deletedCount: 0` (not an error)
-- Very large folder (thousands of blobs) -- delete in batches, report progress
-- Nested folders -- all are deleted (flat listing with prefix catches everything)
+- `AZURE_DEVOPS_AUTH_METHOD` is not `pat` or `azure-ad`: throw `ConfigError` with valid options
+- `AZURE_DEVOPS_PAT_EXPIRY` set but `AZURE_DEVOPS_PAT` not set: no validation needed
+- `AZURE_DEVOPS_PAT_EXPIRY` is not valid ISO 8601: throw `ConfigError`
+- Azure AD token acquisition fails: throw `RepoReplicationError` with instructions to run `az login` or configure service principal
 
 ---
 
-### F4.4 Folder Exists (P0)
+## 4. Sync Pair Configuration and Batch Replication
 
-**Description**: Check if a folder exists (either as marker blob or by having children).
+### F4.1 Sync Pair Configuration Loading (P1)
+
+**Description**: Load repository-to-Azure-Storage sync pair definitions from a JSON or YAML configuration file. Each sync pair is self-contained with its own source repository credentials and its own Azure Storage destination.
 
 **Inputs**:
-- `path`: Folder path to check
+- File path to a sync pair configuration file (`.json`, `.yaml`, or `.yml`)
 
 **Outputs**:
-```json
-{
-  "path": "docs/projects/",
-  "exists": true,
-  "hasMarker": true,
-  "hasChildren": true
-}
-```
+- Parsed and validated `SyncPairConfig` object containing an array of `SyncPair` entries
 
 **Behavior**:
-- Check for marker blob existence
-- If no marker, check if any blobs have this prefix (fetch 1 item)
-- Return both checks for full information
+- Detect file format by extension: `.json` uses `JSON.parse()`, `.yaml`/`.yml` uses `js-yaml`
+- Validate top-level structure: `syncPairs` array must exist and be non-empty
+- Validate each sync pair has required fields: `name` (unique), `platform`, `source`, `destination`
+- For `platform: "github"`: validate `source.repo` is in `owner/repo` format
+- For `platform: "azure-devops"`: validate `source.organization`, `source.project`, `source.repository`, `source.authMethod` are present; if `authMethod` is `pat`, validate `source.pat` is present
+- Validate destination has `accountUrl`, `container`, `folder`, `sasToken`
+- Check token expiry for all tokens using `checkTokenExpiry()` utility: source tokens (GitHub PAT, DevOps PAT) and destination SAS tokens
+- All required fields must be present; no fallback values. Missing fields throw `RepoReplicationError.invalidSyncConfig()`
+- File not found throws `ConfigError` with code `CONFIG_FILE_NOT_FOUND`
+- Parse errors throw `ConfigError` with code `CONFIG_FILE_PARSE_ERROR`
+
+**Sync Pair Configuration Schema**:
+
+GitHub sync pair fields:
+- `name` (required): Unique identifier for this sync pair
+- `platform` (required): Must be `"github"`
+- `source.repo` (required): GitHub repository in `owner/repo` format
+- `source.ref` (optional): Branch, tag, or commit SHA
+- `source.token` (optional): GitHub Personal Access Token (required for private repos)
+- `source.tokenExpiry` (optional): Token expiry in ISO 8601 format
+- `destination.accountUrl` (required): Azure Storage account URL
+- `destination.container` (required): Container name
+- `destination.folder` (required): Destination folder path
+- `destination.sasToken` (required): SAS token for Azure Storage
+- `destination.sasTokenExpiry` (optional): SAS token expiry in ISO 8601 format
+
+Azure DevOps sync pair fields:
+- `name` (required): Unique identifier for this sync pair
+- `platform` (required): Must be `"azure-devops"`
+- `source.organization` (required): Azure DevOps organization name
+- `source.project` (required): Project name
+- `source.repository` (required): Repository name or GUID
+- `source.ref` (optional): Version identifier
+- `source.versionType` (optional): `"branch"`, `"tag"`, or `"commit"`
+- `source.resolveLfs` (optional): Whether to resolve LFS pointers
+- `source.pat` (conditional): Required when `authMethod` is `"pat"`
+- `source.patExpiry` (optional): PAT expiry in ISO 8601 format
+- `source.authMethod` (required): `"pat"` or `"azure-ad"`
+- `source.orgUrl` (optional): Organization URL override
+- `destination.accountUrl` (required): Azure Storage account URL
+- `destination.container` (required): Container name
+- `destination.folder` (required): Destination folder path
+- `destination.sasToken` (required): SAS token for Azure Storage
+- `destination.sasTokenExpiry` (optional): SAS token expiry in ISO 8601 format
 
 **Edge cases**:
-- Marker exists but no children (empty folder) -- `exists: true`
-- No marker but children exist (implicit folder) -- `exists: true`
-- Neither marker nor children -- `exists: false`
+- File does not exist: throw `ConfigError`
+- File has unrecognized extension: throw `ConfigError` with valid extensions
+- File has valid extension but invalid content: throw parse error
+- `syncPairs` is empty array: throw `RepoReplicationError.invalidSyncConfig()`
+- Duplicate `name` across pairs: throw validation error
+- Token already expired: throw `ConfigError` (via `checkTokenExpiry`)
+- Token expiring within 7 days: log warning (via `checkTokenExpiry`)
 
 ---
 
-## 5. Edit Operations
+### F4.2 Sync Pair Batch Replication -- CLI (P1)
 
-### F5.1 Edit File - Read-Modify-Write (P0)
+**Description**: Execute all sync pairs from a configuration file via the CLI command `repo sync`.
 
-**Description**: Download a blob to a temporary local file for external editing, then re-upload.
+**CLI Syntax**:
+```
+repo-sync repo sync --sync-config <path>
+```
 
 **Inputs**:
-- `remote`: Blob path to edit
-- `--temp-dir`: Override temporary directory
+- `--config <path>` (required): Path to sync pair configuration file
 
-**Outputs** (on download phase):
-```json
-{
-  "path": "docs/readme.txt",
-  "tempFile": "/tmp/azure-fs-edit-abc123/readme.txt",
-  "etag": "\"0x8D...\"",
-  "size": 1024,
-  "instruction": "Edit the file at tempFile, then run: azure-fs upload /tmp/.../readme.txt docs/readme.txt"
-}
-```
+**Outputs**:
+- `SyncPairBatchResult` with per-pair results, aggregate counts, and total duration
 
 **Behavior**:
-- Download blob to a temp directory
-- Return the temp file path and the ETag
-- The caller (agent or human) modifies the file
-- Caller uses `upload` or a dedicated `commit-edit` to re-upload
+- Load and validate sync pair config file
+- Check token expiry for all pairs
+- Process pairs sequentially
+- Each pair creates its own `GitHubClientService` or `DevOpsClientService` with per-pair credentials
+- Each pair creates its own `ContainerClient` with per-pair Azure Storage SAS token
+- Continue processing remaining pairs if one fails (fail-open)
+- Report per-pair success/failure in the result
+- Maintain streaming architecture (zero local disk)
+
+**Exit codes**:
+- 0: All pairs succeeded
+- 1: One or more pairs failed
+- 2: Configuration/authentication error (config file missing, invalid, expired token)
+- 3: Validation error (invalid config structure)
 
 **Edge cases**:
-- Blob does not exist -- `BlobNotFoundError`
-- Temp directory is not writable -- throw with directory path
-- Blob modified by another process between download and re-upload -- 412 on conditional upload
+- Config file has 0 valid pairs after validation: error before processing
+- First pair fails: continue with remaining pairs, report failure
+- All pairs fail: exit code 1 with full error details per pair
+- Network failure mid-batch: affected pair fails, others continue
 
 ---
 
-### F5.2 Patch File - In-Place Text Patching (P0)
+### F4.3 Sync Pair Batch Replication -- API (P1)
 
-**Description**: Download a blob, apply text replacements (literal or regex), re-upload.
+**Description**: Execute all sync pairs via the REST API endpoint `POST /api/v1/repo/sync`.
 
-**Inputs**:
-- `remote`: Blob path to patch
-- `--find <text>`: Text to search for
-- `--replace <text>`: Replacement text
-- `--regex`: Treat `--find` as a regular expression
+**Endpoint**: `POST /api/v1/repo/sync`
+
+**Request body**: JSON object with the same structure as the sync pair config file (the `syncPairs` array with all pair definitions).
 
 **Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "patchesApplied": 1,
-  "matchesFound": 3,
-  "originalSize": 1024,
-  "newSize": 1030,
-  "etag": "\"0x8D...\"",
-  "details": [
-    { "find": "old text", "replace": "new text", "matchesFound": 3, "applied": true }
-  ]
-}
-```
+- HTTP 200: All pairs succeeded
+- HTTP 207 (Multi-Status): Some pairs succeeded, some failed
+- HTTP 400: Invalid sync pair configuration
+- HTTP 500: All pairs failed
 
 **Behavior**:
-- Download blob content as string
-- For literal find-replace: use `String.replaceAll(find, replace)`
-- For regex: compile regex from find with optional flags, use `String.replace(regex, replace)`
-- Re-upload with ETag conditional write
+- Same processing logic as CLI command
+- 30-minute timeout (overrides the default 5-minute repo route timeout)
+- Request body is validated using the same `validateSyncPairConfig()` function
+- Token expiry checked for all pairs before processing begins
 
 **Edge cases**:
-- No matches found -- `patchesApplied: 0`, content unchanged, no re-upload needed
-- Invalid regex pattern -- throw with regex error message before download
-- Binary file -- throw error (patch only works on text content)
-- Find text is empty string -- throw validation error
-- Replace results in identical content -- skip re-upload, return `patchesApplied: 0`
+- Request body missing `syncPairs`: HTTP 400 with `REPO_MISSING_PARAMS`
+- Request body too large: handled by Express JSON parser limit
+- Timeout exceeded: HTTP 408 (or connection drop depending on timing)
 
 ---
 
-### F5.3 Append/Prepend Content (P0)
+## 5. Cross-Cutting Features
 
-**Description**: Add content to the beginning or end of an existing blob.
-
-**Inputs**:
-- `remote`: Blob path
-- `--content <text>`: Content to add
-- `--position start|end`: Where to add (default: end)
-
-**Outputs**:
-```json
-{
-  "path": "docs/log.txt",
-  "originalSize": 500,
-  "newSize": 550,
-  "addedBytes": 50,
-  "position": "end",
-  "etag": "\"0x8D...\""
-}
-```
-
-**Behavior**:
-- Download existing content
-- Concatenate: start -> `newContent + existing`, end -> `existing + newContent`
-- Re-upload with ETag conditional write
-
-**Edge cases**:
-- Blob does not exist -- `BlobNotFoundError`
-- Content is empty string -- no-op, return unchanged info
-- Position not specified -- throw `ConfigError` (no default value per project conventions)
-- Appending to a very large file -- memory considerations for download + concatenation
-
----
-
-## 6. Metadata Operations
-
-### F6.1 Set Metadata (P0)
-
-**Description**: Set (replace all) custom metadata on a blob.
-
-**Inputs**:
-- `remote`: Blob path
-- `key=value` pairs: One or more metadata entries
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "metadata": { "author": "john", "version": "2.0" }
-}
-```
-
-**Behavior**:
-- Parse `key=value` pairs from command arguments
-- Validate all keys against C# identifier rules: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
-- Validate total metadata size does not exceed 8 KB
-- Call `blobClient.setMetadata()` -- this REPLACES all existing metadata
-
-**Edge cases**:
-- Key contains hyphens or dots -- `MetadataError` with valid key format explanation
-- Key starts with digit -- `MetadataError`
-- Total size exceeds 8 KB -- `MetadataError` with current size and limit
-- Duplicate keys (case-insensitive) -- `MetadataError`
-- Blob does not exist -- `BlobNotFoundError`
-
----
-
-### F6.2 Get Metadata (P0)
-
-**Description**: Retrieve all custom metadata for a blob.
-
-**Inputs**:
-- `remote`: Blob path
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "metadata": { "author": "john", "version": "1.0", "created_at": "2026-02-22" }
-}
-```
-
-**Edge cases**:
-- Blob has no metadata -- `metadata: {}`
-- Blob does not exist -- `BlobNotFoundError`
-
----
-
-### F6.3 Update Metadata (P1)
-
-**Description**: Merge new metadata with existing metadata (preserving unmentioned keys).
-
-**Inputs**:
-- `remote`: Blob path
-- `key=value` pairs: Metadata entries to add or update
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "metadata": { "author": "john", "version": "2.0", "created_at": "2026-02-22" }
-}
-```
-
-**Behavior**:
-- Read existing metadata via `getProperties()`
-- Merge: `{ ...existing, ...newPairs }`
-- Validate merged result (keys and size)
-- Write back via `setMetadata()`
-
-**Edge cases**:
-- Merged metadata exceeds 8 KB -- `MetadataError` with details
-- Updating a key that doesn't exist yet -- creates it (merge behavior)
-- Concurrent modification between read and write -- retry per config
-
----
-
-### F6.4 Delete Metadata Keys (P1)
-
-**Description**: Remove specific metadata keys from a blob.
-
-**Inputs**:
-- `remote`: Blob path
-- `keys`: One or more key names to remove
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "removedKeys": ["version"],
-  "remainingMetadata": { "author": "john", "created_at": "2026-02-22" }
-}
-```
-
-**Behavior**:
-- Read existing metadata
-- Remove specified keys
-- Write back remaining metadata
-
-**Edge cases**:
-- Key does not exist in current metadata -- silently skip (not an error)
-- Removing all keys -- set empty metadata `{}`
-- Concurrent modification -- retry per config
-
----
-
-## 7. Tag Operations
-
-### F7.1 Set Tags (P1)
-
-**Description**: Set blob index tags on a blob.
-
-**Inputs**:
-- `remote`: Blob path
-- `key=value` pairs: Tag entries
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "tags": { "env": "prod", "status": "active" }
-}
-```
-
-**Behavior**:
-- Validate max 10 tags
-- Validate key length 1-128 characters, value length 0-256 characters
-- Call `blobClient.setTags()`
-
-**Edge cases**:
-- More than 10 tags -- `MetadataError` with count
-- Key or value exceeds length limits -- `MetadataError` with sizes
-- Blob does not exist -- `BlobNotFoundError`
-
----
-
-### F7.2 Get Tags (P1)
-
-**Description**: Retrieve blob index tags for a blob.
-
-**Inputs**:
-- `remote`: Blob path
-
-**Outputs**:
-```json
-{
-  "path": "docs/readme.txt",
-  "tags": { "env": "prod", "status": "active" }
-}
-```
-
-**Edge cases**:
-- Blob has no tags -- `tags: {}`
-- Blob does not exist -- `BlobNotFoundError`
-
----
-
-### F7.3 Query Blobs by Tags (P1)
-
-**Description**: Find blobs matching a tag filter expression.
-
-**Inputs**:
-- `filter`: Tag query expression (e.g., `"env='prod' AND status='active'"`)
-
-**Outputs**:
-```json
-{
-  "filter": "env='prod' AND status='active'",
-  "results": [
-    { "name": "docs/readme.txt", "containerName": "my-container", "tags": { "env": "prod", "status": "active" } },
-    { "name": "docs/config.json", "containerName": "my-container", "tags": { "env": "prod", "status": "active" } }
-  ],
-  "totalResults": 2
-}
-```
-
-**Behavior**:
-- Call `blobServiceClient.findBlobsByTags(filter)`
-- Iterate all results
-
-**Edge cases**:
-- No matching blobs -- `results: [], totalResults: 0`
-- Invalid filter syntax -- Azure SDK error wrapped with syntax guidance
-- Tags not enabled on storage account -- specific error message
-- Requires `Microsoft.Storage/.../blobs/filter/action` permission -- 403 with permission guidance
-
----
-
-## 8. Cross-Cutting Features
-
-### F8.1 JSON Output Mode (P0)
+### F5.1 JSON Output Mode (P0)
 
 **Description**: All commands support `--json` flag for structured JSON output.
 
@@ -807,8 +574,8 @@
   "data": { ... },
   "error": null,
   "metadata": {
-    "command": "upload",
-    "timestamp": "2026-02-22T10:30:00Z",
+    "command": "repo sync",
+    "timestamp": "2026-02-28T10:30:00Z",
     "durationMs": 234
   }
 }
@@ -820,19 +587,19 @@
 
 ---
 
-### F8.2 Verbose Logging (P1)
+### F5.2 Verbose Logging (P1)
 
 **Description**: `--verbose` flag enables detailed logging of Azure SDK requests.
 
 **Behavior**:
 - Log all request parameters (method, URL, headers)
 - Log response status codes and timing
-- Omit file content from logs (per research clarification)
+- Omit file content from logs
 - Log to stderr to keep stdout clean for JSON output
 
 ---
 
-### F8.3 Configurable Retry (P1)
+### F5.3 Configurable Retry (P1)
 
 **Description**: Transient Azure errors (429, 503) are retried based on configured strategy.
 
@@ -848,7 +615,7 @@
 
 ---
 
-### F8.4 Path Normalization (P0)
+### F5.4 Path Normalization (P0)
 
 **Description**: All blob paths are normalized before operations.
 
@@ -868,7 +635,7 @@
 
 ---
 
-### F8.5 Request Logging (P1)
+### F5.5 Request Logging (P1)
 
 **Description**: Log all Azure Storage requests with parameters but without file content.
 
@@ -886,44 +653,13 @@
 - Connection strings
 - SAS tokens
 - Account keys
+- PATs
 
 ---
 
-### F8.6 Content Type Auto-Detection (P1)
+## 6. Error Handling
 
-**Description**: Automatically detect MIME type from file extension when uploading.
-
-**Supported extensions**:
-
-| Extension | Content Type |
-|-----------|-------------|
-| `.txt` | `text/plain` |
-| `.json` | `application/json` |
-| `.xml` | `application/xml` |
-| `.html` | `text/html` |
-| `.css` | `text/css` |
-| `.js` | `application/javascript` |
-| `.ts` | `text/typescript` |
-| `.md` | `text/markdown` |
-| `.csv` | `text/csv` |
-| `.yaml`, `.yml` | `application/x-yaml` |
-| `.png` | `image/png` |
-| `.jpg`, `.jpeg` | `image/jpeg` |
-| `.gif` | `image/gif` |
-| `.pdf` | `application/pdf` |
-| `.zip` | `application/zip` |
-| (unknown) | `application/octet-stream` |
-
-**Edge cases**:
-- No extension -- `application/octet-stream`
-- `--content-type` flag provided -- override auto-detection
-- Multiple extensions (`.tar.gz`) -- use last extension (`.gz`)
-
----
-
-## 9. Error Handling
-
-### F9.1 Structured Error Responses (P0)
+### F6.1 Structured Error Responses (P0)
 
 **Description**: All errors return structured responses with machine-readable codes.
 
@@ -934,94 +670,31 @@
 | `CONFIG_MISSING_REQUIRED` | Configuration | Required config parameter not found |
 | `CONFIG_INVALID_VALUE` | Configuration | Config value fails validation |
 | `CONFIG_FILE_NOT_FOUND` | Configuration | Config file path does not exist |
+| `CONFIG_FILE_PARSE_ERROR` | Configuration | Config file has invalid JSON/YAML |
 | `AUTH_MISSING_CONNECTION_STRING` | Authentication | Connection string env var not set |
 | `AUTH_MISSING_SAS_TOKEN` | Authentication | SAS token env var not set |
 | `AUTH_AZURE_AD_FAILED` | Authentication | DefaultAzureCredential failed |
 | `AUTH_ACCESS_DENIED` | Authentication | 403 from Azure (RBAC issue) |
 | `AUTH_INVALID_METHOD` | Authentication | Unknown auth method specified |
-| `BLOB_NOT_FOUND` | Operations | 404 from Azure (blob does not exist) |
+| `REPO_NOT_FOUND` | Repo Replication | Repository not found or not accessible |
+| `REPO_AUTH_MISSING` | Repo Replication | Repository authentication credentials missing |
+| `REPO_MISSING_PARAMS` | Repo Replication | Required repository parameters not provided |
+| `REPO_REPLICATION_ERROR` | Repo Replication | General replication failure (archive/extraction/upload) |
+| `REPO_INVALID_SYNC_CONFIG` | Repo Replication | Sync pair configuration is invalid |
 | `PATH_TOO_LONG` | Validation | Blob path exceeds 1024 characters |
 | `PATH_INVALID` | Validation | Path contains invalid characters |
-| `META_INVALID_KEY` | Metadata | Key does not match C# identifier rules |
-| `META_SIZE_EXCEEDED` | Metadata | Total metadata exceeds 8 KB |
-| `META_MAX_TAGS` | Tags | More than 10 blob index tags |
 | `NET_CONNECTION_FAILED` | Network | Cannot reach Azure Storage |
 | `NET_TIMEOUT` | Network | Request timed out |
 | `NET_TRANSIENT_ERROR` | Network | 429 or 503 from Azure |
-| `CONFLICT` | Operations | 409 from Azure (resource conflict) |
-| `PRECONDITION_FAILED` | Operations | 412 from Azure (ETag mismatch) |
 | `UNKNOWN_ERROR` | General | Unexpected error |
 
 ---
 
-## 10. Feature Summary by Priority
+## 7. REST API
 
-### P0 -- Must-Have (24 features)
+### F7.1 API Server Startup (P0)
 
-| ID | Feature |
-|----|---------|
-| F1.1 | Config file loading |
-| F1.2 | Environment variable configuration |
-| F1.3 | CLI flag overrides |
-| F1.4 | Configuration validation (no fallbacks) |
-| F1.7 | Connection validation |
-| F2.1 | Azure AD authentication |
-| F2.2 | SAS Token authentication |
-| F2.3 | Connection String authentication |
-| F3.1 | Upload file |
-| F3.2 | Download file |
-| F3.3 | Delete file |
-| F3.4 | Replace file |
-| F3.5 | File exists |
-| F3.6 | File info |
-| F4.1 | Create folder |
-| F4.2 | List folder |
-| F4.3 | Delete folder |
-| F4.4 | Folder exists |
-| F5.1 | Edit file (read-modify-write) |
-| F5.2 | Patch file (text replacement) |
-| F5.3 | Append/Prepend content |
-| F8.1 | JSON output mode |
-| F8.4 | Path normalization |
-| F9.1 | Structured error responses |
-
-### P1 -- Important (10 features)
-
-| ID | Feature |
-|----|---------|
-| F1.5 | Interactive config init |
-| F1.6 | Config display |
-| F6.1 | Set metadata |
-| F6.2 | Get metadata |
-| F6.3 | Update metadata (merge) |
-| F6.4 | Delete metadata keys |
-| F7.1 | Set tags |
-| F7.2 | Get tags |
-| F7.3 | Query blobs by tags |
-| F8.2 | Verbose logging |
-| F8.3 | Configurable retry |
-| F8.5 | Request logging |
-| F8.6 | Content type auto-detection |
-
-### P2 -- Nice-to-Have (future)
-
-| Feature | Description |
-|---------|-------------|
-| ~~Batch upload~~ | ~~Upload multiple files in parallel~~ — **Implemented** as `upload-dir` command |
-| Batch download | Download multiple files in parallel |
-| Container management | Create/delete containers |
-| ~~Recursive upload~~ | ~~Mirror local directory to blob storage~~ — **Implemented** as `upload-dir` command |
-| Watch mode | Monitor and sync file changes |
-| Progress events | JSON progress events for large file transfers |
-| Shell completion | Bash/Zsh auto-completion for commands |
-
----
-
-## 11. REST API
-
-### F11.1 API Server Startup (P0)
-
-**Description**: Start an Express 5.x HTTP server exposing all azure-fs operations as REST endpoints.
+**Description**: Start an Express 5.x HTTP server exposing repo-sync operations as REST endpoints.
 
 **Inputs**:
 - Resolved configuration with `api` section (port, host, corsOrigins, swaggerEnabled, uploadMaxSizeMb, requestTimeoutMs)
@@ -1033,9 +706,9 @@
 
 **Behavior**:
 - Load and validate full configuration including `api` section (all six API parameters are required; no defaults)
-- Create `BlobFileSystemService` and `MetadataService` instances (shared across all requests)
+- Create `BlobFileSystemService` instance (shared across all requests)
 - Mount middleware: CORS, JSON body parser, request logger, timeout enforcement
-- Mount all route groups under `/api/v1/`
+- Mount repo replication routes under `/api/v1/repo`
 - Mount health check routes at `/api/health`
 - Conditionally mount Swagger UI at `/api/docs` when `api.swaggerEnabled` is true
 - Mount centralized error handler middleware last
@@ -1049,12 +722,12 @@
 
 ---
 
-### F11.2 API Configuration (P0)
+### F7.2 API Configuration (P0)
 
 **Description**: Extend the existing layered configuration system with API-specific settings.
 
 **Inputs**:
-- Config file `.azure-fs.json` with optional `api` section
+- Config file `.repo-sync.json` with optional `api` section
 - Environment variables: `AZURE_FS_API_PORT`, `AZURE_FS_API_HOST`, `AZURE_FS_API_CORS_ORIGINS`, `AZURE_FS_API_SWAGGER_ENABLED`, `AZURE_FS_API_UPLOAD_MAX_SIZE_MB`, `AZURE_FS_API_REQUEST_TIMEOUT_MS`
 
 **Outputs**:
@@ -1073,7 +746,7 @@
 
 ---
 
-### F11.3 Health Check Endpoints (P0)
+### F7.3 Health Check Endpoints (P0)
 
 **Description**: Provide liveness and readiness health check endpoints.
 
@@ -1085,7 +758,7 @@
 ```json
 {
   "status": "ok",
-  "timestamp": "2026-02-23T10:00:00Z",
+  "timestamp": "2026-02-28T10:00:00Z",
   "uptime": 3600,
   "checks": {
     "azureStorage": "connected"
@@ -1099,144 +772,39 @@
 
 ---
 
-### F11.4 File Operations via REST (P0)
+### F7.4 Repo Replication Endpoints (P0)
 
-**Description**: Expose all file CRUD operations as HTTP endpoints.
+**Description**: Expose repository replication operations as HTTP endpoints.
 
 **Endpoints**:
 
 | Method | Path | Maps To | Description |
 |--------|------|---------|-------------|
-| `POST` | `/api/v1/files` | `uploadFile()` | Upload new file (multipart: `file` + `remotePath` + optional `metadata` JSON) |
-| `GET` | `/api/v1/files/:path` | `downloadFile()` | Download file content with correct Content-Type |
-| `DELETE` | `/api/v1/files/:path` | `deleteFile()` | Delete file (optional `If-Match`) |
-| `PUT` | `/api/v1/files/:path` | `replaceFile()` | Replace file (multipart; **requires `If-Match`**) |
-| `GET` | `/api/v1/files/:path/info` | `getFileInfo()` | Get file properties, metadata, tags |
-| `HEAD` | `/api/v1/files/:path` | `fileExists()` | Check existence (200 or 404) |
+| `POST` | `/api/v1/repo/github` | `replicateGitHub()` | Replicate GitHub repo to Azure Blob Storage |
+| `POST` | `/api/v1/repo/devops` | `replicateDevOps()` | Replicate Azure DevOps repo to Azure Blob Storage |
+| `POST` | `/api/v1/repo/sync` | `syncPairs()` | Execute batch sync pair replication |
 
 **Behavior**:
-- Upload: Accept multipart form data via multer (memory storage). Field `file` for the binary, `remotePath` for destination, optional `metadata` as JSON string. Size limited by `api.uploadMaxSizeMb`.
-- Download: Return raw file content with `Content-Type`, `Content-Length`, and `ETag` headers
-- Replace: Requires `If-Match` header. Returns 428 if missing, 412 if stale.
-- All success responses include `ETag` header
-- Download supports `If-None-Match` header -- returns 304 Not Modified if ETag matches
+- GitHub and DevOps endpoints use a 5-minute timeout
+- Sync endpoint uses a 30-minute timeout
+- All responses use the standard envelope format (`success`, `data`, `metadata`)
+- Sync endpoint returns HTTP 207 for partial success
 
 **Edge cases**:
-- Upload file exceeds size limit -- 413 Payload Too Large
-- Missing `remotePath` in upload form -- 400 Bad Request
-- Blob not found on download/delete/replace -- 404
-- ETag mismatch on replace -- 412 Precondition Failed
-- Missing `If-Match` on replace -- 428 Precondition Required
+- Missing required fields: HTTP 400 with `REPO_MISSING_PARAMS`
+- Auth failure: HTTP 401 with `REPO_AUTH_MISSING`
+- Repository not found: HTTP 404 with `REPO_NOT_FOUND`
+- Operation timeout: HTTP 408
+- Internal error: HTTP 500 with `REPO_REPLICATION_ERROR`
 
 ---
 
-### F11.5 Folder Operations via REST (P0)
+### F7.5 Error Mapping Middleware (P0)
 
-**Description**: Expose folder listing, creation, deletion, and existence checks.
-
-**Endpoints**:
-
-| Method | Path | Maps To | Description |
-|--------|------|---------|-------------|
-| `GET` | `/api/v1/folders/:path` | `listFolder()` | List contents (`?recursive=true` for recursive) |
-| `POST` | `/api/v1/folders/:path` | `createFolder()` | Create virtual folder |
-| `DELETE` | `/api/v1/folders/:path` | `deleteFolder()` | Delete folder and all contents |
-| `HEAD` | `/api/v1/folders/:path` | `folderExists()` | Check existence (200 or 404) |
-
-**Edge cases**:
-- Root listing (`/api/v1/folders/`) -- lists top-level items
-- Folder does not exist on delete -- `deletedCount: 0` (not an error)
-- Path normalization: trailing slashes handled transparently
-
----
-
-### F11.6 Edit Operations via REST (P0)
-
-**Description**: Expose text patching, appending, and the two-phase edit workflow.
-
-**Endpoints**:
-
-| Method | Path | Maps To | Description |
-|--------|------|---------|-------------|
-| `PATCH` | `/api/v1/files/:path/patch` | `patchFile()` | Find-replace patches (**requires `If-Match`**) |
-| `PATCH` | `/api/v1/files/:path/append` | `appendToFile()` | Append/prepend content (**requires `If-Match`**) |
-| `POST` | `/api/v1/files/:path/edit` | `editFile()` | Download for editing (returns ETag) |
-| `PUT` | `/api/v1/files/:path/edit` | `editFileUpload()` | Re-upload edited file (**requires `If-Match`**) |
-
-**Request bodies**:
-
-Patch:
-```json
-{
-  "patches": [
-    { "find": "old", "replace": "new", "isRegex": false },
-    { "find": "v\\d+", "replace": "v2", "isRegex": true, "flags": "g" }
-  ]
-}
-```
-
-Append:
-```json
-{
-  "content": "New line\n",
-  "position": "end"
-}
-```
-
-**Edge cases**:
-- Missing `If-Match` on PATCH/PUT -- 428
-- ETag mismatch -- 412
-- Invalid regex pattern in patch -- 400
-- Empty patches array -- 400
-
----
-
-### F11.7 Metadata Operations via REST (P1)
-
-**Description**: Expose metadata CRUD operations.
-
-**Endpoints**:
-
-| Method | Path | Maps To | Description |
-|--------|------|---------|-------------|
-| `GET` | `/api/v1/meta/:path` | `getMetadata()` | Get all metadata |
-| `PUT` | `/api/v1/meta/:path` | `setMetadata()` | Set (replace all) metadata |
-| `PATCH` | `/api/v1/meta/:path` | `updateMetadata()` | Merge partial metadata |
-| `DELETE` | `/api/v1/meta/:path` | `deleteMetadata()` | Delete specific keys |
-
-**Edge cases**:
-- Invalid metadata key -- 400 with validation message
-- Metadata size exceeded -- 400
-- Blob does not exist -- 404
-
----
-
-### F11.8 Tag Operations via REST (P1)
-
-**Description**: Expose tag CRUD and query operations.
-
-**Endpoints**:
-
-| Method | Path | Maps To | Description |
-|--------|------|---------|-------------|
-| `GET` | `/api/v1/tags/:path` | `getTags()` | Get all tags for a blob |
-| `PUT` | `/api/v1/tags/:path` | `setTags()` | Set (replace all) tags |
-| `GET` | `/api/v1/tags` | `queryByTags()` | Query blobs by filter (`?filter=...`) |
-
-**Edge cases**:
-- More than 10 tags -- 400
-- Invalid OData filter expression -- 400 with syntax guidance
-- No matching blobs -- empty results array (not an error)
-
----
-
-### F11.9 Error Mapping Middleware (P0)
-
-**Description**: Centralized Express error middleware that maps `AzureFsError` subclasses to appropriate HTTP status codes.
+**Description**: Centralized Express error middleware that maps error subclasses to appropriate HTTP status codes.
 
 **Behavior**:
 - `AzureFsError` instances: use `err.statusCode` or code-to-status mapping table, respond with `err.toJSON()`
-- `MulterError` instances: respond with 400 and upload-specific error message
 - Unknown errors: log full error, respond with 500 and generic message (never expose internal details)
 
 **Response format** (all errors):
@@ -1244,12 +812,12 @@ Append:
 {
   "success": false,
   "error": {
-    "code": "BLOB_NOT_FOUND",
-    "message": "Blob not found at path: docs/missing.txt"
+    "code": "REPO_NOT_FOUND",
+    "message": "Repository not found: owner/repo"
   },
   "metadata": {
-    "command": "api:download",
-    "timestamp": "2026-02-23T10:00:00Z",
+    "command": "api:repo-github",
+    "timestamp": "2026-02-28T10:00:00Z",
     "durationMs": 45
   }
 }
@@ -1257,29 +825,7 @@ Append:
 
 ---
 
-### F11.10 ETag Concurrency Control (P0)
-
-**Description**: Forward Azure ETags as standard HTTP ETag headers for client-side concurrency management.
-
-**Behavior**:
-- All GET and mutation responses include the `ETag` header (value from Azure blob ETag)
-- `PUT` (replace) and `PATCH` (patch/append): **require** `If-Match` header -- return 428 if missing
-- `DELETE`: honor `If-Match` if present, proceed without check if absent
-- `POST` (upload new): `If-Match` not applicable
-- GET supports `If-None-Match` -- return 304 Not Modified if ETag matches
-
-**HTTP Status Codes**:
-
-| Scenario | Status |
-|----------|--------|
-| ETag matches, update succeeds | 200 OK |
-| ETag mismatch (concurrent modification) | 412 Precondition Failed |
-| `If-Match` missing on required endpoint | 428 Precondition Required |
-| `If-None-Match` matches (resource unchanged) | 304 Not Modified |
-
----
-
-### F11.11 Swagger/OpenAPI Documentation (P1)
+### F7.6 Swagger/OpenAPI Documentation (P1)
 
 **Description**: Interactive API documentation at `/api/docs` using swagger-jsdoc and swagger-ui-express.
 
@@ -1294,7 +840,7 @@ Append:
 
 ---
 
-### F11.12 Request Logging & Timeout (P1)
+### F7.7 Request Logging & Timeout (P1)
 
 **Description**: Log all HTTP requests and enforce per-request timeouts.
 
@@ -1308,7 +854,7 @@ Append:
 
 ---
 
-### F11.13 CORS Configuration (P0)
+### F7.8 CORS Configuration (P0)
 
 **Description**: Restrict cross-origin access to explicitly configured origins.
 
@@ -1324,36 +870,9 @@ Append:
 
 ---
 
-## 11.1 REST API Feature Summary by Priority
+## 8. API Server Enhancement Features
 
-### P0 -- Must-Have
-
-| ID | Feature |
-|----|---------|
-| F11.1 | API server startup and graceful shutdown |
-| F11.2 | API configuration (6 required parameters, no defaults) |
-| F11.3 | Health check endpoints (liveness + readiness) |
-| F11.4 | File operations via REST (upload, download, delete, replace, info, exists) |
-| F11.5 | Folder operations via REST (list, create, delete, exists) |
-| F11.6 | Edit operations via REST (patch, append, edit workflow) |
-| F11.9 | Error mapping middleware |
-| F11.10 | ETag concurrency control |
-| F11.13 | CORS configuration |
-
-### P1 -- Important
-
-| ID | Feature |
-|----|---------|
-| F11.7 | Metadata operations via REST |
-| F11.8 | Tag operations via REST |
-| F11.11 | Swagger/OpenAPI documentation |
-| F11.12 | Request logging and timeout |
-
----
-
-## 12. API Server Enhancement Features
-
-### F12.1 NODE_ENV Support (P0)
+### F8.1 NODE_ENV Support (P0)
 
 **Description**: Add `NODE_ENV` as a required configuration parameter for the API server, controlling environment-specific behaviors.
 
@@ -1368,7 +887,7 @@ Append:
 - Required when starting the API server (throw `ConfigError` if missing)
 - Controls error response detail: stack traces included only in `development` mode
 - Controls Swagger server description: "Production server" vs "Development server"
-- Gates development-only routes (F12.5)
+- Gates development-only routes (F8.5)
 - CLI commands are NOT affected (not validated for CLI)
 
 **Edge cases**:
@@ -1378,7 +897,7 @@ Append:
 
 ---
 
-### F12.2 Config Source Tracking (P1)
+### F8.2 Config Source Tracking (P1)
 
 **Description**: Track which configuration source (config file, environment variable, or CLI flag) provided each resolved configuration value.
 
@@ -1394,7 +913,7 @@ Append:
 - Only the winning source is recorded (highest priority that provided a value)
 - Keys are tracked with dot notation (e.g., `storage.accountUrl`, `api.port`)
 - Only active for API server path (`resolveApiConfig()`); CLI path (`resolveConfig()`) is unaffected
-- Consumed by development routes (F12.5) to display source audit trail
+- Consumed by development routes (F8.5) to display source audit trail
 
 **Edge cases**:
 - Key provided by multiple sources -- only the highest-priority source is recorded
@@ -1403,14 +922,14 @@ Append:
 
 ---
 
-### F12.3 Container-Aware Swagger URLs (P1)
+### F8.3 Container-Aware Swagger URLs (P1)
 
 **Description**: Enhance Swagger/OpenAPI specification generation to auto-detect runtime environments (Azure App Service, Kubernetes, Docker) and generate correct server URLs.
 
 **Inputs**:
 - Auto-detected env vars: `WEBSITE_HOSTNAME`, `WEBSITE_SITE_NAME`, `K8S_SERVICE_HOST`, `K8S_SERVICE_PORT`, `DOCKER_HOST_URL`
 - User overrides: `PUBLIC_URL`, `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS`, `AZURE_FS_API_SWAGGER_SERVER_VARIABLES`
-- Optional `actualPort` when port was auto-selected (F12.4)
+- Optional `actualPort` when port was auto-selected (F8.4)
 
 **Outputs**:
 - Swagger spec `servers` array with environment-appropriate URL(s)
@@ -1431,7 +950,7 @@ Append:
 
 ---
 
-### F12.4 PortChecker Utility (P0)
+### F8.4 PortChecker Utility (P0)
 
 **Description**: Proactive port availability check before the Express server attempts to listen, with optional auto-selection of the next available port.
 
@@ -1459,7 +978,7 @@ Append:
 
 ---
 
-### F12.5 Development Routes (P1)
+### F8.5 Development Routes (P1)
 
 **Description**: Development-only API endpoints for inspecting environment variables and configuration sources.
 
@@ -1488,7 +1007,7 @@ Append:
     ],
     "sources": { "config-file": 5, "environment-variable": 12, "system": 28 }
   },
-  "metadata": { "timestamp": "2026-02-23T10:00:00Z" }
+  "metadata": { "timestamp": "2026-02-28T10:00:00Z" }
 }
 ```
 
@@ -1507,7 +1026,7 @@ Append:
 
 ---
 
-### F12.6 Console Hotkeys (P2)
+### F8.6 Console Hotkeys (P2)
 
 **Description**: Interactive keyboard shortcuts for the API server console during development and debugging. Provides quick access to common developer actions without restarting the server.
 
@@ -1534,7 +1053,7 @@ Append:
 
 **Behavior**:
 - The `ConsoleCommands` class is instantiated in `src/api/server.ts` after `server.listen()` completes
-- `ConsoleCommands.createInspector(config)` builds a config inspector function that masks `AZURE_STORAGE_CONNECTION_STRING` and `AZURE_STORAGE_SAS_TOKEN`
+- `ConsoleCommands.createInspector(config)` builds a config inspector function that masks sensitive values
 - The verbose toggle modifies `process.env.AZURE_FS_LOG_LEVEL` at runtime, which affects subsequent logger operations
 - The freeze toggle replaces `console.log/error/warn` with no-op functions; unfreezing restores the originals
 - On graceful shutdown (SIGTERM/SIGINT), `cleanup()` closes the readline interface and restores console methods
@@ -1549,7 +1068,7 @@ Append:
 
 ---
 
-### F12.7 Hotkey API Endpoints (P1)
+### F8.7 Hotkey API Endpoints (P1)
 
 **Description**: HTTP endpoints that invoke the same console hotkey actions remotely. Provides access to hotkey functionality in Docker containers, cloud deployments, and other environments where stdin is not reachable.
 
@@ -1575,7 +1094,7 @@ Append:
 {
   "success": true,
   "data": { "action": "verbose", "verbose": true },
-  "metadata": { "timestamp": "2026-02-26T10:00:00Z" }
+  "metadata": { "timestamp": "2026-02-28T10:00:00Z" }
 }
 ```
 
@@ -1584,7 +1103,7 @@ Append:
 {
   "success": true,
   "data": { "frozen": false, "verbose": true },
-  "metadata": { "timestamp": "2026-02-26T10:00:00Z" }
+  "metadata": { "timestamp": "2026-02-28T10:00:00Z" }
 }
 ```
 
@@ -1603,7 +1122,7 @@ Append:
       { "key": "Ctrl+C", "command": "exit", "description": "Graceful exit" }
     ]
   },
-  "metadata": { "timestamp": "2026-02-26T10:00:00Z" }
+  "metadata": { "timestamp": "2026-02-28T10:00:00Z" }
 }
 ```
 
@@ -1624,35 +1143,9 @@ Append:
 
 ---
 
-## 12.1 API Enhancement Feature Summary by Priority
+## 9. Docker Deployment
 
-### P0 -- Must-Have
-
-| ID | Feature |
-|----|---------|
-| F12.1 | NODE_ENV support (environment mode control) |
-| F12.4 | PortChecker utility (proactive port conflict resolution) |
-
-### P1 -- Important
-
-| ID | Feature |
-|----|---------|
-| F12.2 | Config source tracking (audit trail for config values) |
-| F12.3 | Container-aware Swagger URLs (cloud deployment support) |
-| F12.5 | Development routes (config debugging endpoints) |
-| F12.7 | Hotkey API endpoints (remote console hotkey access) |
-
-### P2 -- Nice-to-Have
-
-| ID | Feature |
-|----|---------|
-| F12.6 | Console hotkeys (interactive developer shortcuts) |
-
----
-
-## 13. Docker Deployment
-
-### F13.1 Docker Containerization (P1)
+### F9.1 Docker Containerization (P1)
 
 **Description**: Package the REST API as a Docker container for production deployment.
 
@@ -1680,8 +1173,8 @@ Append:
 
 **Build & Run**:
 ```bash
-docker build -t azure-fs-api .
-docker run --env-file .env -p 3000:3000 azure-fs-api
+docker build -t repo-sync-api .
+docker run --env-file .env -p 3000:3000 repo-sync-api
 docker compose up
 ```
 
@@ -1693,10 +1186,60 @@ docker compose up
 
 ---
 
-## 13.1 Docker Feature Summary by Priority
+## 10. Feature Summary by Priority
+
+### P0 -- Must-Have
+
+| ID | Feature |
+|----|---------|
+| F1.1 | Config file loading |
+| F1.2 | Environment variable configuration |
+| F1.3 | CLI flag overrides |
+| F1.4 | Configuration validation (no fallbacks) |
+| F1.7 | Connection validation |
+| F2.1 | Azure AD authentication |
+| F2.2 | SAS Token authentication |
+| F2.3 | Connection String authentication |
+| F5.1 | JSON output mode |
+| F5.4 | Path normalization |
+| F6.1 | Structured error responses |
+| F7.1 | API server startup and graceful shutdown |
+| F7.2 | API configuration (6 required parameters, no defaults) |
+| F7.3 | Health check endpoints (liveness + readiness) |
+| F7.4 | Repo replication endpoints (github, devops, sync) |
+| F7.5 | Error mapping middleware |
+| F7.8 | CORS configuration |
+| F8.1 | NODE_ENV support (environment mode control) |
+| F8.4 | PortChecker utility (proactive port conflict resolution) |
 
 ### P1 -- Important
 
 | ID | Feature |
 |----|---------|
-| F13.1 | Docker containerization (multi-stage build, non-root, health checks) |
+| F1.5 | Interactive config init |
+| F1.6 | Config display |
+| F3.1 | GitHub repository replication (CLI) |
+| F3.2 | Azure DevOps repository replication (CLI) |
+| F3.3 | GitHub repository replication (API) |
+| F3.4 | Azure DevOps repository replication (API) |
+| F3.5 | GitHub replication configuration |
+| F3.6 | Azure DevOps replication configuration |
+| F4.1 | Sync pair configuration loading (JSON/YAML) |
+| F4.2 | Sync pair batch replication (CLI) |
+| F4.3 | Sync pair batch replication (API) |
+| F5.2 | Verbose logging |
+| F5.3 | Configurable retry |
+| F5.5 | Request logging |
+| F7.6 | Swagger/OpenAPI documentation |
+| F7.7 | Request logging and timeout |
+| F8.2 | Config source tracking |
+| F8.3 | Container-aware Swagger URLs |
+| F8.5 | Development routes |
+| F8.7 | Hotkey API endpoints |
+| F9.1 | Docker containerization |
+
+### P2 -- Nice-to-Have
+
+| ID | Feature |
+|----|---------|
+| F8.6 | Console hotkeys (interactive developer shortcuts) |

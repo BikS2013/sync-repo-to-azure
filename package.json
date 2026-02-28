@@ -1,17 +1,16 @@
 {
-  "name": "azure-fs",
+  "name": "repo-sync",
   "version": "1.0.0",
-  "description": "Azure Blob Storage virtual file system CLI tool",
+  "description": "Repository synchronization tool - GitHub and Azure DevOps to Azure Blob Storage",
   "main": "dist/index.js",
   "bin": {
-    "azure-fs": "dist/index.js"
+    "repo-sync": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "clean": "rm -rf dist",
-    "test": "ts-node test_scripts/test-cli-integration.ts",
     "api": "ts-node src/api/server.ts",
     "api:dev": "nodemon --exec ts-node src/api/server.ts",
     "api:start": "node dist/api/server.js"
@@ -31,23 +30,28 @@
   "dependencies": {
     "@azure/identity": "^4.0.0",
     "@azure/storage-blob": "^12.31.0",
+    "@octokit/rest": "^22.0.1",
     "azure-venv": "github:BikS2013/azure-venv-typescript",
     "chalk": "^4.1.2",
     "commander": "^12.0.0",
     "cors": "^2.8.6",
     "dotenv": "^16.4.0",
     "express": "^5.2.1",
-    "multer": "^2.0.2",
+    "js-yaml": "^4.1.1",
     "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "tar-stream": "^3.1.7",
+    "unzipper": "^0.12.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
-    "@types/multer": "^2.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.11.0",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
+    "@types/tar-stream": "^3.1.4",
+    "@types/unzipper": "^0.10.11",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.0",
     "typescript": "^5.3.0"

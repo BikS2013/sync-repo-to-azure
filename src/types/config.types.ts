@@ -1,7 +1,8 @@
 import { ApiConfig } from "./api-config.types";
+import { DevOpsAuthMethod } from "./repo-replication.types";
 
 /**
- * Authentication methods supported by azure-fs.
+ * Authentication methods supported by repo-sync.
  *
  * - "connection-string": Uses AZURE_STORAGE_CONNECTION_STRING env var
  * - "sas-token": Uses AZURE_STORAGE_SAS_TOKEN env var appended to account URL
@@ -39,11 +40,11 @@ export interface ConfigSourceTracker {
 }
 
 /**
- * The structure of the .azure-fs.json configuration file.
+ * The structure of the .repo-sync.json configuration file.
  * All fields are optional in the file because they can be provided
  * via environment variables or CLI flags.
  */
-export interface AzureFsConfigFile {
+export interface RepoSyncConfigFile {
   storage?: {
     accountUrl?: string;
     containerName?: string;
@@ -60,20 +61,24 @@ export interface AzureFsConfigFile {
     initialDelayMs?: number;
     maxDelayMs?: number;
   };
-  batch?: {
-    concurrency?: number;
-  };
   api?: {
     port?: number;
     host?: string;
     corsOrigins?: string[];
     swaggerEnabled?: boolean;
-    uploadMaxSizeMb?: number;
     requestTimeoutMs?: number;
     nodeEnv?: string;
     autoSelectPort?: boolean;
     swaggerAdditionalServers?: string[];
     swaggerServerVariables?: boolean;
+  };
+  github?: {
+    tokenExpiry?: string;
+  };
+  devops?: {
+    authMethod?: string;  // "pat" | "azure-ad"
+    orgUrl?: string;
+    patExpiry?: string;
   };
 }
 
@@ -111,8 +116,15 @@ export interface ResolvedConfig {
     initialDelayMs: number;
     maxDelayMs: number;
   };
-  batch: {
-    concurrency: number;
-  };
   api?: ApiConfig;
+  github?: {
+    token?: string;
+    tokenExpiry?: string;
+  };
+  devops?: {
+    pat?: string;
+    patExpiry?: string;
+    authMethod?: DevOpsAuthMethod;
+    orgUrl?: string;
+  };
 }

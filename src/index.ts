@@ -4,11 +4,7 @@ import { Command } from "commander";
 import * as dotenv from "dotenv";
 import {
   registerConfigCommands,
-  registerFileCommands,
-  registerFolderCommands,
-  registerEditCommands,
-  registerMetaCommands,
-  registerTagsCommands,
+  registerRepoCommands,
 } from "./commands";
 import { exitCodeForError } from "./utils/exit-codes.utils";
 
@@ -18,23 +14,19 @@ dotenv.config();
 const program = new Command();
 
 program
-  .name("azure-fs")
-  .description("Azure Blob Storage virtual file system CLI tool")
+  .name("repo-sync")
+  .description("Repository synchronization tool for GitHub and Azure DevOps to Azure Blob Storage")
   .version("1.0.0")
   .option("--json", "Output structured JSON instead of human-readable text")
   .option("-v, --verbose", "Enable verbose logging of requests and operations")
-  .option("--config <path>", "Path to .azure-fs.json config file")
+  .option("--config <path>", "Path to .repo-sync.json config file")
   .option("-a, --account-url <url>", "Storage account URL (overrides config file and env var)")
   .option("-c, --container <name>", "Container name (overrides config file and env var)")
   .option("--auth-method <method>", "Authentication method: connection-string | sas-token | azure-ad");
 
 // Register command modules
 registerConfigCommands(program);
-registerFileCommands(program);
-registerFolderCommands(program);
-registerEditCommands(program);
-registerMetaCommands(program);
-registerTagsCommands(program);
+registerRepoCommands(program);
 
 // Run the CLI
 async function main(): Promise<void> {

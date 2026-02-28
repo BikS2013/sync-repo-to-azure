@@ -46,10 +46,6 @@ function getBaseUrl(host: string, port: number): string {
 /**
  * Build the OpenAPI servers array with optional additional servers
  * and optional server variables.
- *
- * Additional servers: AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS (comma-separated URLs)
- * Server variables: AZURE_FS_API_SWAGGER_SERVER_VARIABLES=true enables
- *   protocol/host/port variables in Swagger UI for interactive URL editing.
  */
 function buildSwaggerServers(baseUrl: string, apiConfig: ApiConfig): object[] {
   const servers: object[] = [];
@@ -111,18 +107,14 @@ export function createSwaggerSpec(apiConfig: ApiConfig, actualPort?: number): ob
     definition: {
       openapi: "3.0.0",
       info: {
-        title: "Azure FS REST API",
+        title: "Repo Sync API",
         version: "1.0.0",
-        description: "REST API for Azure Blob Storage virtual file system",
+        description: "REST API for repository synchronization from GitHub and Azure DevOps to Azure Blob Storage",
       },
       servers,
       tags: [
         { name: "Health", description: "Health check endpoints" },
-        { name: "Files", description: "File upload, download, delete, replace, info, and existence checks" },
-        { name: "Folders", description: "Folder listing, creation, deletion, and existence checks" },
-        { name: "Edit", description: "In-place edit, patch (find-replace), and append operations" },
-        { name: "Metadata", description: "Blob user-defined metadata operations" },
-        { name: "Tags", description: "Blob index tag operations and queries" },
+        { name: "Repository", description: "Repository replication and sync pair operations" },
         { name: "Development", description: "Development-only diagnostic endpoints (only available when NODE_ENV=development)" },
         { name: "Hotkeys", description: "Remote console hotkey actions (only available when NODE_ENV=development)" },
       ],

@@ -2,15 +2,15 @@
 
 ### REST API
 
-<azure-fs-api>
+<repo-sync-api>
     <objective>
-        Start the REST API server for Azure Blob Storage operations
+        Start the REST API server for repository synchronization operations
     </objective>
     <command>
         npm run api
     </command>
     <info>
-        Starts an Express-based REST API server that exposes Azure Blob Storage
+        Starts an Express-based REST API server that exposes repository synchronization
         operations over HTTP. The API is an alternative to the CLI for programmatic
         access and integration with web applications or AI agents.
 
@@ -25,36 +25,10 @@
             GET    /api/health                  Liveness check (always 200 if process is alive)
             GET    /api/health/ready            Readiness check (verifies Azure Storage connectivity)
 
-          Files (mounted at /api/v1/files):
-            POST   /api/v1/files               Upload a file (multipart/form-data)
-            GET    /api/v1/files/:path          Download a file
-            HEAD   /api/v1/files/:path          Check if a file exists
-            PUT    /api/v1/files/:path          Replace file content (multipart/form-data)
-            DELETE /api/v1/files/:path          Delete a file
-            GET    /api/v1/files/:path/info     Get file properties and metadata
-
-          Edit (mounted at /api/v1/files):
-            PATCH  /api/v1/files/:path/patch    Find-and-replace in file content
-            PATCH  /api/v1/files/:path/append   Append or prepend content to a file
-            POST   /api/v1/files/:path/edit     Download file for editing (returns ETag)
-            PUT    /api/v1/files/:path/edit     Re-upload edited file (ETag concurrency check)
-
-          Folders (mounted at /api/v1/folders):
-            GET    /api/v1/folders/:path        List folder contents
-            POST   /api/v1/folders/:path        Create a virtual folder
-            DELETE /api/v1/folders/:path        Delete folder and contents recursively
-            HEAD   /api/v1/folders/:path        Check if a folder exists
-
-          Metadata (mounted at /api/v1/meta):
-            GET    /api/v1/meta/:path           Get all metadata for a blob
-            PUT    /api/v1/meta/:path           Set (replace all) metadata
-            PATCH  /api/v1/meta/:path           Merge/update metadata
-            DELETE /api/v1/meta/:path           Delete specific metadata keys
-
-          Tags (mounted at /api/v1/tags):
-            GET    /api/v1/tags                 Query blobs by tag filter (?filter=...)
-            GET    /api/v1/tags/:path           Get all tags for a blob
-            PUT    /api/v1/tags/:path           Set (replace all) tags
+          Repository Replication (mounted at /api/v1/repo):
+            POST   /api/v1/repo/github           Clone a GitHub repo to blob storage
+            POST   /api/v1/repo/devops           Clone an Azure DevOps repo to blob storage
+            POST   /api/v1/repo/sync             Batch-replicate repos from sync pair config (30-min timeout)
 
           Development (mounted at /api/dev, only when NODE_ENV=development):
             GET    /api/dev/env                 List all environment variables (masked sensitive values)
@@ -69,9 +43,9 @@
             GET    /api/dev/hotkeys/help        List available hotkeys and descriptions
 
         Configuration:
-          All 6 AZURE_FS_API_* environment variables plus NODE_ENV and AUTO_SELECT_PORT
+          All AZURE_FS_API_* environment variables plus NODE_ENV and AUTO_SELECT_PORT
           must be set (see Environment Variables section). Alternatively, configure
-          via the "api" section in .azure-fs.json.
+          via the "api" section in .repo-sync.json.
 
         Health check:
           GET http://localhost:3000/api/health
@@ -84,9 +58,8 @@
           npm run api                         # Start in development mode
           npm run build && npm run api:start  # Start in production mode
           curl http://localhost:3000/api/health
-          curl http://localhost:3000/api/v1/files/documents/readme.md
     </info>
-</azure-fs-api>
+</repo-sync-api>
 
 ## PortChecker Utility
 
@@ -147,7 +120,7 @@ BASE=http://localhost:3000
 BASE=http://localhost:4100
 
 # Azure Web App
-BASE=https://azure-fs-api.azurewebsites.net
+BASE=https://repo-sync-api.azurewebsites.net
 ```
 
 All examples below use `$BASE` as the base URL.
@@ -166,204 +139,99 @@ curl -s $BASE/api/health/ready
 
 ---
 
-### Files
+### Repository Replication
 
-#### Upload a file
+The single-repo endpoints (`/github`, `/devops`) have a 5-minute timeout (300,000 ms) instead of the default request timeout, because repository replication is a long-running streaming operation. The batch sync endpoint (`/sync`) has a 30-minute timeout (1,800,000 ms) to accommodate multi-pair operations.
 
-```bash
-curl -s -X POST $BASE/api/v1/files \
-  -F "file=@./report.pdf" \
-  -F "remotePath=documents/report.pdf"
-
-# With metadata
-curl -s -X POST $BASE/api/v1/files \
-  -F "file=@./data.csv" \
-  -F "remotePath=data/export.csv" \
-  -F "metadata[source]=etl" \
-  -F "metadata[date]=2026-02-26"
-```
-
-#### Download a file
+#### Clone a GitHub repository
 
 ```bash
-# Download to stdout (JSON response with content)
-curl -s $BASE/api/v1/files/documents/report.pdf
-
-# Save to local file
-curl -s $BASE/api/v1/files/documents/report.pdf --output ./report.pdf
-```
-
-#### Check if a file exists
-
-```bash
-# Returns 200 if exists, 404 if not (HEAD request -- no body)
-curl -s -o /dev/null -w "%{http_code}" -X HEAD $BASE/api/v1/files/documents/report.pdf
-```
-
-#### Get file info (properties, metadata, tags)
-
-```bash
-curl -s $BASE/api/v1/files/documents/report.pdf/info
-```
-
-#### Replace file content
-
-```bash
-curl -s -X PUT $BASE/api/v1/files/documents/report.pdf \
-  -F "file=@./updated-report.pdf"
-
-# With metadata
-curl -s -X PUT $BASE/api/v1/files/documents/report.pdf \
-  -F "file=@./updated-report.pdf" \
-  -F "metadata[version]=3"
-```
-
-#### Delete a file
-
-```bash
-curl -s -X DELETE $BASE/api/v1/files/documents/report.pdf
-```
-
----
-
-### Folders
-
-#### List folder contents
-
-```bash
-# List root (use %2F for the root path)
-curl -s $BASE/api/v1/folders/%2F
-
-# List a subfolder
-curl -s $BASE/api/v1/folders/documents/
-
-# Recursive listing (query param)
-curl -s "$BASE/api/v1/folders/documents/?recursive=true"
-```
-
-#### Create a virtual folder
-
-```bash
-curl -s -X POST $BASE/api/v1/folders/data/exports/2026/
-```
-
-#### Delete a folder (recursive)
-
-```bash
-curl -s -X DELETE $BASE/api/v1/folders/temp/
-```
-
-#### Check if a folder exists
-
-```bash
-curl -s -o /dev/null -w "%{http_code}" -X HEAD $BASE/api/v1/folders/documents/
-```
-
----
-
-### Edit Operations
-
-#### Patch (find-and-replace)
-
-```bash
-# Literal string replace
-curl -s -X PATCH $BASE/api/v1/edit/patch/config/settings.json \
+# Clone a public repository (default branch)
+curl -s -X POST $BASE/api/v1/repo/github \
   -H "Content-Type: application/json" \
-  -d '{"find": "localhost", "replace": "production.example.com"}'
+  -d '{"repo": "microsoft/typescript", "destPath": "repos/typescript"}'
 
-# Regex replace
-curl -s -X PATCH $BASE/api/v1/edit/patch/documents/readme.md \
+# Clone a specific branch
+curl -s -X POST $BASE/api/v1/repo/github \
   -H "Content-Type: application/json" \
-  -d '{"find": "v1\\.\\d+", "replace": "v2.0", "regex": true, "flags": "gi"}'
-```
+  -d '{"repo": "facebook/react", "destPath": "repos/react", "ref": "v18.2.0"}'
 
-#### Append / Prepend content
-
-```bash
-# Append to end (default)
-curl -s -X PATCH $BASE/api/v1/edit/append/logs/app.log \
+# Clone a private repository (requires GITHUB_TOKEN env var on the server)
+curl -s -X POST $BASE/api/v1/repo/github \
   -H "Content-Type: application/json" \
-  -d '{"content": "New log entry\n"}'
+  -d '{"repo": "owner/private-repo", "destPath": "backups/private-repo"}'
+```
 
-# Prepend to start
-curl -s -X PATCH $BASE/api/v1/edit/append/documents/readme.md \
+**Request body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `repo` | string | Yes | GitHub repository in "owner/repo" format |
+| `destPath` | string | Yes | Destination folder path in Azure Blob Storage |
+| `ref` | string | No | Branch name, tag, or commit SHA. Omit for default branch |
+
+#### Clone an Azure DevOps repository
+
+```bash
+# Clone from Azure DevOps (default branch)
+curl -s -X POST $BASE/api/v1/repo/devops \
   -H "Content-Type: application/json" \
-  -d '{"content": "# Header\n\n", "position": "start"}'
-```
+  -d '{"organization": "myorg", "project": "myproject", "repository": "myrepo", "destPath": "repos/myrepo"}'
 
-#### Edit workflow (two-phase: download then re-upload)
-
-```bash
-# Phase 1: Download for editing (returns local path + ETag)
-curl -s -X POST $BASE/api/v1/edit/download/documents/readme.md
-
-# Phase 2: Re-upload after editing (requires ETag from phase 1)
-curl -s -X PUT $BASE/api/v1/edit/upload/documents/readme.md \
-  -F "file=@/tmp/azure-fs-edit-abc123.md" \
-  -H "If-Match: \"0x8DC1234567890AB\""
-```
-
----
-
-### Metadata
-
-#### Get all metadata
-
-```bash
-curl -s $BASE/api/v1/meta/documents/report.pdf
-```
-
-#### Set metadata (replace all)
-
-```bash
-curl -s -X PUT $BASE/api/v1/meta/documents/report.pdf \
+# Clone a specific tag
+curl -s -X POST $BASE/api/v1/repo/devops \
   -H "Content-Type: application/json" \
-  -d '{"author": "john", "department": "engineering"}'
+  -d '{"organization": "myorg", "project": "myproject", "repository": "myrepo", "destPath": "releases/v1.0", "ref": "v1.0.0", "versionType": "tag"}'
 ```
 
-#### Update metadata (merge)
+**Request body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `organization` | string | Yes | Azure DevOps organization name |
+| `project` | string | Yes | Project name |
+| `repository` | string | Yes | Repository name or GUID |
+| `destPath` | string | Yes | Destination folder path in Azure Blob Storage |
+| `ref` | string | No | Version identifier (branch name, tag, commit SHA). Omit for default branch |
+| `versionType` | string | No | How to interpret ref: `branch`, `tag`, or `commit`. Defaults to `branch` |
+| `resolveLfs` | boolean | No | Resolve LFS pointers. Defaults to `false` |
+
+#### Batch sync repositories from sync pair configuration
+
+This endpoint has a **30-minute timeout** (1,800,000 ms) instead of the 5-minute default on other repo routes, because multi-pair operations can be long-running.
 
 ```bash
-curl -s -X PATCH $BASE/api/v1/meta/documents/report.pdf \
+# Sync two repositories (one GitHub, one DevOps)
+curl -s -X POST $BASE/api/v1/repo/sync \
   -H "Content-Type: application/json" \
-  -d '{"version": "4", "reviewed": "true"}'
+  -d '{
+    "syncPairs": [
+      {
+        "name": "my-github-repo",
+        "platform": "github",
+        "source": {
+          "repo": "microsoft/typescript",
+          "ref": "main"
+        },
+        "destination": {
+          "accountUrl": "https://myaccount.blob.core.windows.net",
+          "container": "repos",
+          "folder": "typescript",
+          "sasToken": "sv=2022-11-02&ss=b&srt=co&sp=rwdlacyx..."
+        }
+      }
+    ]
+  }'
 ```
 
-#### Delete metadata keys
+**Response codes:**
 
-```bash
-curl -s -X DELETE $BASE/api/v1/meta/documents/report.pdf \
-  -H "Content-Type: application/json" \
-  -d '{"keys": ["draft", "temp_flag"]}'
-```
-
----
-
-### Tags
-
-#### Get all tags
-
-```bash
-curl -s $BASE/api/v1/tags/documents/report.pdf
-```
-
-#### Set tags (replace all)
-
-```bash
-curl -s -X PUT $BASE/api/v1/tags/documents/report.pdf \
-  -H "Content-Type: application/json" \
-  -d '{"department": "engineering", "status": "published"}'
-```
-
-#### Query blobs by tag filter
-
-```bash
-# OData tag filter expression
-curl -s "$BASE/api/v1/tags?filter=department%20%3D%20%27engineering%27"
-
-# Multiple conditions
-curl -s "$BASE/api/v1/tags?filter=department%20%3D%20%27engineering%27%20AND%20status%20%3D%20%27published%27"
-```
+| Status | Meaning |
+|--------|---------|
+| 200 | All sync pairs completed successfully |
+| 207 | Partial success (some pairs succeeded, some failed) |
+| 400 | Invalid sync pair configuration (validation error) |
+| 500 | All sync pairs failed, or server error |
 
 ---
 
@@ -411,54 +279,4 @@ open $BASE/api/docs
 
 # Download OpenAPI JSON spec
 curl -s $BASE/api/docs.json
-```
-
----
-
-### Quick Smoke Test
-
-Run this sequence to verify the API is fully operational:
-
-```bash
-BASE=http://localhost:3000  # or http://localhost:4100 for Docker, or https://azure-fs-api.azurewebsites.net for Azure
-
-# 1. Health check
-curl -s $BASE/api/health
-
-# 2. Create a folder
-curl -s -X POST $BASE/api/v1/folders/test-smoke/
-
-# 3. Upload a file
-echo "Hello Azure FS" > /tmp/smoke-test.txt
-curl -s -X POST $BASE/api/v1/files \
-  -F "file=@/tmp/smoke-test.txt" \
-  -F "remotePath=test-smoke/hello.txt"
-
-# 4. Download the file
-curl -s $BASE/api/v1/files/test-smoke/hello.txt
-
-# 5. Get file info
-curl -s $BASE/api/v1/files/test-smoke/hello.txt/info
-
-# 6. Set metadata
-curl -s -X PUT $BASE/api/v1/meta/test-smoke/hello.txt \
-  -H "Content-Type: application/json" \
-  -d '{"env": "test"}'
-
-# 7. Get metadata
-curl -s $BASE/api/v1/meta/test-smoke/hello.txt
-
-# 8. Patch content
-curl -s -X PATCH $BASE/api/v1/edit/patch/test-smoke/hello.txt \
-  -H "Content-Type: application/json" \
-  -d '{"find": "Hello", "replace": "Goodbye"}'
-
-# 9. List folder contents
-curl -s $BASE/api/v1/folders/test-smoke/
-
-# 10. Cleanup: delete folder and contents
-curl -s -X DELETE $BASE/api/v1/folders/test-smoke/
-
-# Cleanup temp file
-rm /tmp/smoke-test.txt
 ```
