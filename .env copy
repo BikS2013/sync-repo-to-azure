@@ -1,0 +1,61 @@
+# ---- Application Environment ----
+
+NODE_ENV=development
+
+# ---- Azure Storage Configuration ----
+
+# Target storage account: biksappsettings (eastus2)
+AZURE_STORAGE_ACCOUNT_URL=https://biksappsettings.blob.core.windows.net/
+AZURE_STORAGE_CONTAINER_NAME=app-settings
+
+# Authentication method
+AZURE_FS_AUTH_METHOD=sas-token
+AZURE_STORAGE_SAS_TOKEN=sv=2024-11-04&ss=bfqt&srt=co&sp=rwdlacupiytfx&se=2028-02-28T15:39:06Z&st=2026-02-28T07:24:06Z&spr=https&sig=s2ABMwFigSzxzA%2FS7uCN2CLawGqvbhDAjHW3CSoZ%2BaE%3D
+AZURE_STORAGE_SAS_TOKEN_EXPIRY=2028-02-28T15:39:06Z
+
+# ---- Logging ----
+
+AZURE_FS_LOG_LEVEL=info
+AZURE_FS_LOG_REQUESTS=false
+
+# ---- Retry Strategy ----
+
+AZURE_FS_RETRY_STRATEGY=exponential
+AZURE_FS_RETRY_MAX_RETRIES=3
+AZURE_FS_RETRY_INITIAL_DELAY_MS=1000
+AZURE_FS_RETRY_MAX_DELAY_MS=5000
+
+# ---- GitHub Repository Replication ----
+
+# GitHub Personal Access Token (required for private repos)
+# Generate at: https://github.com/settings/tokens (scopes: repo)
+GITHUB_TOKEN=<REPLACE_WITH_GITHUB_PAT>
+GITHUB_TOKEN_EXPIRY=<REPLACE_WITH_EXPIRY_ISO8601>
+
+# ---- Azure DevOps Repository Replication ----
+
+# AZURE_DEVOPS_AUTH_METHOD=pat
+# AZURE_DEVOPS_ORG_URL=https://dev.azure.com/myorg
+# AZURE_DEVOPS_PAT=<REPLACE_WITH_DEVOPS_PAT>
+# AZURE_DEVOPS_PAT_EXPIRY=<REPLACE_WITH_EXPIRY_ISO8601>
+
+# ---- Sync Pair Configuration ----
+
+# Path to sync pair config file (JSON/YAML) mapping repos to Azure Storage
+AZURE_FS_SYNC_CONFIG_PATH=./sync-settings.json
+
+# ---- REST API Configuration ----
+
+AZURE_FS_API_PORT=3000
+AZURE_FS_API_HOST=0.0.0.0
+AZURE_FS_API_CORS_ORIGINS=*
+AZURE_FS_API_SWAGGER_ENABLED=true
+AZURE_FS_API_REQUEST_TIMEOUT_MS=30000
+AUTO_SELECT_PORT=true
+
+# ---- Azure Virtual Environment (Remote Config Sync) ----
+
+# Syncs .env and .azure-fs.json from biksappsettings/repl-config at startup
+AZURE_VENV=https://biksappsettings.blob.core.windows.net/repl-config
+AZURE_VENV_SAS_TOKEN=se=2028-02-28T00%3A00%3A00Z&sp=rl&sv=2022-11-02&sr=c&sig=fH1ADA1ClT/7Pj5YddO0rU4bW8wLf7Blpl4GSEA%2B95M%3D
+AZURE_VENV_SAS_EXPIRY=2028-02-28T00:00:00Z

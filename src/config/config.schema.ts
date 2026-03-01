@@ -19,59 +19,76 @@ export function validateConfig(merged: Record<string, unknown>): ResolvedConfig 
   const logging = (merged["logging"] as Record<string, unknown>) || {};
   const retry = (merged["retry"] as Record<string, unknown>) || {};
 
-  // --- Storage section ---
-  if (!storage["accountUrl"]) {
-    throw ConfigError.missingRequired(
-      "storage.accountUrl",
-      "--account-url https://myaccount.blob.core.windows.net",
-      "export AZURE_STORAGE_ACCOUNT_URL=https://myaccount.blob.core.windows.net",
-      '{ "storage": { "accountUrl": "https://myaccount.blob.core.windows.net" } }',
-    );
-  }
+  // --- Storage section (optional for sync-pairs-only deployments) ---
+  // If ANY storage field is provided, ALL required storage fields must be present.
+  // If NO storage fields are provided, the storage section is omitted from the config.
+  const hasAnyStorageField = !!(storage["accountUrl"] || storage["containerName"] || storage["authMethod"]);
+  let resolvedStorage: ResolvedConfig["storage"] | undefined;
 
-  if (!storage["containerName"]) {
-    throw ConfigError.missingRequired(
-      "storage.containerName",
-      "--container my-container",
-      "export AZURE_STORAGE_CONTAINER_NAME=my-container",
-      '{ "storage": { "containerName": "my-container" } }',
-    );
-  }
-
-  if (!storage["authMethod"]) {
-    throw ConfigError.missingRequired(
-      "storage.authMethod",
-      "--auth-method azure-ad",
-      "export AZURE_FS_AUTH_METHOD=azure-ad",
-      '{ "storage": { "authMethod": "azure-ad" } }',
-    );
-  }
-
-  const authMethod = storage["authMethod"] as string;
-  if (!VALID_AUTH_METHODS.includes(authMethod as AuthMethod)) {
-    throw ConfigError.invalidValue("storage.authMethod", authMethod, VALID_AUTH_METHODS);
-  }
-
-  // --- SAS token expiry (required when authMethod is sas-token) ---
-  let sasTokenExpiry: string | undefined;
-  if (authMethod === "sas-token") {
-    if (!storage["sasTokenExpiry"]) {
+  if (hasAnyStorageField) {
+    if (!storage["accountUrl"]) {
       throw ConfigError.missingRequired(
-        "storage.sasTokenExpiry",
-        "(not available as CLI flag, use env var or config file)",
-        "export AZURE_STORAGE_SAS_TOKEN_EXPIRY=2026-12-31T00:00:00Z",
-        '{ "storage": { "sasTokenExpiry": "2026-12-31T00:00:00Z" } }',
+        "storage.accountUrl",
+        "--account-url https://myaccount.blob.core.windows.net",
+        "export AZURE_STORAGE_ACCOUNT_URL=https://myaccount.blob.core.windows.net",
+        '{ "storage": { "accountUrl": "https://myaccount.blob.core.windows.net" } }',
       );
     }
 
-    sasTokenExpiry = storage["sasTokenExpiry"] as string;
-    const parsedDate = new Date(sasTokenExpiry);
-    if (isNaN(parsedDate.getTime())) {
-      throw ConfigError.invalidValue(
-        "storage.sasTokenExpiry",
-        sasTokenExpiry,
-        ["ISO 8601 date string (e.g., 2026-12-31T00:00:00Z)"],
+    if (!storage["containerName"]) {
+      throw ConfigError.missingRequired(
+        "storage.containerName",
+        "--container my-container",
+        "export AZURE_STORAGE_CONTAINER_NAME=my-container",
+        '{ "storage": { "containerName": "my-container" } }',
       );
+    }
+
+    if (!storage["authMethod"]) {
+      throw ConfigError.missingRequired(
+        "storage.authMethod",
+        "--auth-method azure-ad",
+        "export AZURE_FS_AUTH_METHOD=azure-ad",
+        '{ "storage": { "authMethod": "azure-ad" } }',
+      );
+    }
+
+    const authMethod = storage["authMethod"] as string;
+    if (!VALID_AUTH_METHODS.includes(authMethod as AuthMethod)) {
+      throw ConfigError.invalidValue("storage.authMethod", authMethod, VALID_AUTH_METHODS);
+    }
+
+    // --- SAS token expiry (required when authMethod is sas-token) ---
+    let sasTokenExpiry: string | undefined;
+    if (authMethod === "sas-token") {
+      if (!storage["sasTokenExpiry"]) {
+        throw ConfigError.missingRequired(
+          "storage.sasTokenExpiry",
+          "(not available as CLI flag, use env var or config file)",
+          "export AZURE_STORAGE_SAS_TOKEN_EXPIRY=2026-12-31T00:00:00Z",
+          '{ "storage": { "sasTokenExpiry": "2026-12-31T00:00:00Z" } }',
+        );
+      }
+
+      sasTokenExpiry = storage["sasTokenExpiry"] as string;
+      const parsedDate = new Date(sasTokenExpiry);
+      if (isNaN(parsedDate.getTime())) {
+        throw ConfigError.invalidValue(
+          "storage.sasTokenExpiry",
+          sasTokenExpiry,
+          ["ISO 8601 date string (e.g., 2026-12-31T00:00:00Z)"],
+        );
+      }
+    }
+
+    resolvedStorage = {
+      accountUrl: storage["accountUrl"] as string,
+      containerName: storage["containerName"] as string,
+      authMethod: authMethod as AuthMethod,
+    };
+
+    if (sasTokenExpiry) {
+      resolvedStorage.sasTokenExpiry = sasTokenExpiry;
     }
   }
 
@@ -177,11 +194,6 @@ export function validateConfig(merged: Record<string, unknown>): ResolvedConfig 
 
   // Build the validated config object
   const resolvedConfig: ResolvedConfig = {
-    storage: {
-      accountUrl: storage["accountUrl"] as string,
-      containerName: storage["containerName"] as string,
-      authMethod: authMethod as AuthMethod,
-    },
     logging: {
       level: logLevel as LogLevel,
       logRequests: Boolean(logging["logRequests"]),
@@ -194,8 +206,8 @@ export function validateConfig(merged: Record<string, unknown>): ResolvedConfig 
     },
   };
 
-  if (sasTokenExpiry) {
-    resolvedConfig.storage.sasTokenExpiry = sasTokenExpiry;
+  if (resolvedStorage) {
+    resolvedConfig.storage = resolvedStorage;
   }
 
   // --- GitHub section (optional, loaded lazily from env vars) ---

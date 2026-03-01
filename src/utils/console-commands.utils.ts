@@ -1,6 +1,7 @@
 import * as readline from "readline";
 import chalk from "chalk";
 import { ApiResolvedConfig } from "../types/api-config.types";
+import { getAzureVenvIntrospection, getWatchStatus } from "./azure-venv-holder.utils";
 
 /**
  * Callback that returns a snapshot of configuration for the "inspect" hotkey.
@@ -46,9 +47,9 @@ export class ConsoleCommands {
         v ? `${v.slice(0, 8)}...${v.slice(-4)}` : "(not set)";
 
       return {
-        "storage.accountUrl": config.storage.accountUrl,
-        "storage.containerName": config.storage.containerName,
-        "storage.authMethod": config.storage.authMethod,
+        "storage.accountUrl": config.storage?.accountUrl ?? "(not configured)",
+        "storage.containerName": config.storage?.containerName ?? "(not configured)",
+        "storage.authMethod": config.storage?.authMethod ?? "(not configured)",
         "logging.level": config.logging.level,
         "logging.logRequests": config.logging.logRequests,
         "retry.strategy": config.retry.strategy,
@@ -111,6 +112,9 @@ export class ConsoleCommands {
         break;
       case "i":
         this.executeInspect();
+        break;
+      case "b":
+        this.executeAzureVenvInspect();
         break;
       case "h":
         this.showHelp();
@@ -192,6 +196,48 @@ export class ConsoleCommands {
   }
 
   /**
+   * Inspect azure-venv sync result: blobs, file tree, env sources.
+   * Returns structured result for API consumption.
+   */
+  public executeAzureVenvInspect(): { action: string; data: Record<string, unknown> | null } {
+    const data = getAzureVenvIntrospection();
+
+    if (!data) {
+      this.originalConsoleLog(chalk.yellow("azure-venv: not initialized"));
+      return { action: "azure-venv", data: null };
+    }
+
+    if (!data.attempted) {
+      this.originalConsoleLog(chalk.yellow("azure-venv: AZURE_VENV not configured (no-op)"));
+      return { action: "azure-venv", data };
+    }
+
+    const watchStatus = getWatchStatus();
+
+    this.originalConsoleLog(chalk.cyan("\nazure-venv Introspection:"));
+    this.originalConsoleLog(chalk.cyan("\u2500".repeat(60)));
+    this.originalConsoleLog(`   ${chalk.bold("Watch")}: ${watchStatus.watching ? "active" : "inactive"}`);
+    this.originalConsoleLog(`   ${chalk.bold("Blobs downloaded")}: ${data.downloaded} / ${data.totalBlobs}`);
+    this.originalConsoleLog(`   ${chalk.bold("Failed")}: ${data.failed}`);
+    this.originalConsoleLog(`   ${chalk.bold("Duration")}: ${data.durationMs}ms`);
+    this.originalConsoleLog(`   ${chalk.bold("Remote .env loaded")}: ${data.remoteEnvLoaded}`);
+
+    const tierCounts = data.envTierCounts as Record<string, number>;
+    this.originalConsoleLog(`   ${chalk.bold("Env vars")}: OS=${tierCounts.os}, Remote=${tierCounts.remote}, Local=${tierCounts.local}`);
+
+    const blobs = data.blobs as Array<{ relativePath: string; size: number }>;
+    if (blobs.length > 0) {
+      this.originalConsoleLog(chalk.cyan("\n   Blobs in memory:"));
+      for (const blob of blobs) {
+        this.originalConsoleLog(`     ${blob.relativePath} (${blob.size} bytes)`);
+      }
+    }
+    this.originalConsoleLog(chalk.cyan("\u2500".repeat(60)));
+
+    return { action: "azure-venv", data };
+  }
+
+  /**
    * Get current status of freeze and verbose modes.
    */
   public getStatus(): { frozen: boolean; verbose: boolean } {
@@ -209,6 +255,7 @@ export class ConsoleCommands {
         { key: "f", command: "freeze", description: "Freeze / unfreeze log output" },
         { key: "v", command: "verbose", description: "Toggle verbose mode (switches log level between debug/info)" },
         { key: "i", command: "config", description: "Inspect resolved configuration (sensitive values masked)" },
+        { key: "b", command: "azure-venv", description: "Inspect azure-venv sync result (blobs, env sources)" },
         { key: "h", command: "help", description: "Show available hotkeys" },
         { key: "Ctrl+C", command: "exit", description: "Graceful exit" },
       ],
@@ -222,6 +269,7 @@ export class ConsoleCommands {
     this.originalConsoleLog(chalk.white("   \u2022 f \u21B5  : Freeze/Unfreeze output"));
     this.originalConsoleLog(chalk.white("   \u2022 v \u21B5  : Toggle verbose mode"));
     this.originalConsoleLog(chalk.white("   \u2022 i \u21B5  : Inspect configuration"));
+    this.originalConsoleLog(chalk.white("   \u2022 b \u21B5  : Inspect azure-venv (blobs, env sources)"));
     this.originalConsoleLog(chalk.white("   \u2022 h \u21B5  : Show this help"));
     this.originalConsoleLog(chalk.white("   \u2022 Ctrl+C : Exit application"));
     this.originalConsoleLog(chalk.gray("\u2501".repeat(50)) + "\n");

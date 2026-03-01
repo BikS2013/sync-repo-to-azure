@@ -26,6 +26,9 @@ export interface ConnectionTestResult {
  * Throws AuthError with clear message when credentials are missing for the selected method.
  */
 export function createBlobServiceClient(config: ResolvedConfig): BlobServiceClient {
+  if (!config.storage) {
+    throw AuthError.missingStorageConfig();
+  }
   switch (config.storage.authMethod) {
     case "connection-string":
       return createConnectionStringClient();
@@ -42,6 +45,9 @@ export function createBlobServiceClient(config: ResolvedConfig): BlobServiceClie
  * Create a ContainerClient for the configured container.
  */
 export function createContainerClient(config: ResolvedConfig): ContainerClient {
+  if (!config.storage) {
+    throw AuthError.missingStorageConfig();
+  }
   const serviceClient = createBlobServiceClient(config);
   return serviceClient.getContainerClient(config.storage.containerName);
 }
@@ -74,6 +80,9 @@ export function createSyncPairContainerClient(
 export async function validateConnection(
   config: ResolvedConfig,
 ): Promise<ConnectionTestResult> {
+  if (!config.storage) {
+    throw AuthError.missingStorageConfig();
+  }
   const result: ConnectionTestResult = {
     success: false,
     authMethod: config.storage.authMethod,
@@ -110,24 +119,28 @@ function createConnectionStringClient(): BlobServiceClient {
 }
 
 function createSasTokenClient(config: ResolvedConfig): BlobServiceClient {
+  // Callers must validate config.storage before calling this function
+  const storage = config.storage!;
+
   const sasToken = process.env.AZURE_STORAGE_SAS_TOKEN;
   if (!sasToken) {
     throw AuthError.missingSasToken();
   }
 
   // Check if the SAS token has expired
-  if (config.storage.sasTokenExpiry) {
-    const expiryDate = new Date(config.storage.sasTokenExpiry);
+  if (storage.sasTokenExpiry) {
+    const expiryDate = new Date(storage.sasTokenExpiry);
     if (expiryDate.getTime() <= Date.now()) {
-      throw AuthError.sasTokenExpired(config.storage.sasTokenExpiry);
+      throw AuthError.sasTokenExpired(storage.sasTokenExpiry);
     }
   }
 
-  const separator = config.storage.accountUrl.includes("?") ? "&" : "?";
-  return new BlobServiceClient(`${config.storage.accountUrl}${separator}${sasToken}`);
+  const separator = storage.accountUrl.includes("?") ? "&" : "?";
+  return new BlobServiceClient(`${storage.accountUrl}${separator}${sasToken}`);
 }
 
 function createAzureAdClient(config: ResolvedConfig): BlobServiceClient {
+  // Callers must validate config.storage before calling this function
   const credential = new DefaultAzureCredential();
-  return new BlobServiceClient(config.storage.accountUrl, credential);
+  return new BlobServiceClient(config.storage!.accountUrl, credential);
 }

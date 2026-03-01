@@ -29,10 +29,12 @@
             POST   /api/v1/repo/github           Clone a GitHub repo to blob storage
             POST   /api/v1/repo/devops           Clone an Azure DevOps repo to blob storage
             POST   /api/v1/repo/sync             Batch-replicate repos from sync pair config (30-min timeout)
+            GET    /api/v1/repo/sync-pairs        List configured sync pairs with token status
 
           Development (mounted at /api/dev, only when NODE_ENV=development):
             GET    /api/dev/env                 List all environment variables (masked sensitive values)
             GET    /api/dev/env/:key            Get a specific environment variable by name
+            GET    /api/dev/azure-venv          Inspect azure-venv sync result and watch status
 
           Hotkeys (mounted at /api/dev/hotkeys, only when NODE_ENV=development):
             POST   /api/dev/hotkeys/clear       Clear console output
@@ -71,10 +73,12 @@ The `PortChecker` class (`src/utils/port-checker.utils.ts`) provides proactive T
 - `getProcessUsingPort(port)`: Uses `lsof` to identify the process using a port (macOS/Linux only). Returns `null` on Windows or failure. Informational only.
 
 **Server startup flow** (in `src/api/server.ts`):
+0. `watchAzureVenv()` performs initial sync and starts background polling for blob changes (configurable via `AZURE_VENV_POLL_INTERVAL`, default 30s). No-op if `AZURE_VENV` is not set.
 1. Check if configured port is available via `PortChecker.isPortAvailable()`.
 2. If unavailable and `AUTO_SELECT_PORT=true`, find next available port via `PortChecker.findAvailablePort()`.
 3. If unavailable and `AUTO_SELECT_PORT=false`, exit with error code 1.
 4. The `server.on("error")` handler remains as a safety net for race conditions.
+5. On graceful shutdown (SIGTERM/SIGINT): stop azure-venv watcher, cleanup console hotkeys, drain connections.
 
 ## Container-Aware Swagger URLs
 
@@ -101,6 +105,7 @@ The `ConsoleCommands` class (`src/utils/console-commands.utils.ts`) provides int
 | `f` | Freeze / unfreeze log output |
 | `v` | Toggle verbose mode (switches `AZURE_FS_LOG_LEVEL` between debug/info) |
 | `i` | Inspect resolved configuration (sensitive values masked) |
+| `b` | Inspect azure-venv (blobs, env sources, watch status) |
 | `h` | Show help menu |
 | `Ctrl+C` | Graceful exit |
 
@@ -233,6 +238,21 @@ curl -s -X POST $BASE/api/v1/repo/sync \
 | 400 | Invalid sync pair configuration (validation error) |
 | 500 | All sync pairs failed, or server error |
 
+#### List configured sync pairs
+
+```bash
+# List all configured sync pairs (requires AZURE_FS_SYNC_CONFIG_PATH env var on the server)
+curl -s $BASE/api/v1/repo/sync-pairs
+```
+
+**Response codes:**
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Sync pairs listed successfully |
+| 400 | AZURE_FS_SYNC_CONFIG_PATH not configured on the server |
+| 500 | Config file read/parse failure |
+
 ---
 
 ### Development Endpoints (NODE_ENV=development only)
@@ -246,6 +266,29 @@ curl -s $BASE/api/dev/env
 # Get a specific environment variable
 curl -s $BASE/api/dev/env/AZURE_STORAGE_ACCOUNT_URL
 ```
+
+#### Azure-venv Introspection
+
+```bash
+# Inspect azure-venv sync result: blobs, file tree, env sources, watch status
+curl -s $BASE/api/dev/azure-venv
+```
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `watching` | boolean | Whether the azure-venv watcher is actively polling for blob changes |
+| `attempted` | boolean | Whether azure-venv initialization was attempted |
+| `totalBlobs` | integer | Total number of blobs found |
+| `downloaded` | integer | Number of blobs successfully downloaded |
+| `failed` | integer | Number of blobs that failed to download |
+| `durationMs` | number | Duration of the initial sync in milliseconds |
+| `remoteEnvLoaded` | boolean | Whether a remote `.env` file was loaded |
+| `blobs` | array | Blob metadata (relativePath, size, etag, lastModified) — no content |
+| `fileTree` | array | Hierarchical file tree built from blob paths |
+| `envSources` | array | Environment variable source mapping (key, source) |
+| `envTierCounts` | object | Count of env vars by tier (os, remote, local) |
 
 #### Hotkeys (remote console commands)
 

@@ -10,7 +10,7 @@ import {
 import { Logger } from "../utils/logger.utils";
 import { exitCodeForError } from "../utils/exit-codes.utils";
 import { DevOpsVersionType } from "../types/repo-replication.types";
-import { loadSyncPairConfig } from "../config/sync-pair.loader";
+import { loadSyncPairConfig, summarizeSyncPairs } from "../config/sync-pair.loader";
 import { ConfigError } from "../errors/config.error";
 
 /**
@@ -119,10 +119,17 @@ export function registerRepoCommands(program: Command): void {
             "Sync pair configuration path not provided. Use --sync-config <path> or set the AZURE_FS_SYNC_CONFIG_PATH environment variable.",
           );
         }
-        const syncConfig = loadSyncPairConfig(configPath, logger);
+        const syncConfig = await loadSyncPairConfig(configPath, logger);
 
-        // Create RepoReplicationService (global containerClient used as fallback for constructor)
-        const containerClient = createContainerClient(config);
+        // Create RepoReplicationService (global containerClient is optional for sync-pairs-only use)
+        let containerClient: import("@azure/storage-blob").ContainerClient | null = null;
+        if (config.storage) {
+          try {
+            containerClient = createContainerClient(config);
+          } catch {
+            // Global storage not configured — sync pairs use per-pair credentials
+          }
+        }
         const service = new RepoReplicationService(config, containerClient, logger);
 
         const result = await service.replicateFromSyncConfig(syncConfig);
@@ -136,6 +143,43 @@ export function registerRepoCommands(program: Command): void {
         }
       } catch (err) {
         const output = formatErrorFromException(err, "repo sync", startTime);
+        outputResult(output, jsonMode);
+        process.exitCode = exitCodeForError(err);
+      }
+    });
+
+  // --- list-sync-pairs ---
+  repo
+    .command("list-sync-pairs")
+    .description("List configured sync pairs from a sync pair configuration file (JSON or YAML)")
+    .option("--sync-config <path>", "Path to sync pair configuration file (.json, .yaml, .yml) — overrides AZURE_FS_SYNC_CONFIG_PATH env var")
+    .action(async (options: Record<string, unknown>, cmd: Command) => {
+      const startTime = Date.now();
+      const globalOpts = cmd.parent!.parent!.opts();
+      const jsonMode = globalOpts.json === true;
+
+      try {
+        const config = resolveConfig(globalOpts);
+        const logger = new Logger(config.logging.level, globalOpts.verbose === true);
+
+        // Resolve sync config path: CLI flag > env var (no fallback)
+        const configPath = (options["syncConfig"] as string | undefined)
+          || process.env.AZURE_FS_SYNC_CONFIG_PATH;
+
+        if (!configPath) {
+          throw new ConfigError(
+            "CONFIG_MISSING",
+            "Sync pair configuration path not provided. Use --sync-config <path> or set the AZURE_FS_SYNC_CONFIG_PATH environment variable.",
+          );
+        }
+
+        const syncConfig = await loadSyncPairConfig(configPath, logger);
+        const result = summarizeSyncPairs(syncConfig, configPath);
+
+        const output = formatSuccess(result, "repo list-sync-pairs", startTime);
+        outputResult(output, jsonMode);
+      } catch (err) {
+        const output = formatErrorFromException(err, "repo list-sync-pairs", startTime);
         outputResult(output, jsonMode);
         process.exitCode = exitCodeForError(err);
       }

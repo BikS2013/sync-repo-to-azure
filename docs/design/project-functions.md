@@ -88,10 +88,12 @@
   - Name of missing field
   - All 3 ways to provide it (CLI flag, env var, config file key)
   - Example value
+- **Storage section is conditionally required**: If no storage fields are provided, the storage section is omitted from `ResolvedConfig` (sync-pairs-only mode). If any storage field is provided, all required storage fields must be present.
 
 **Edge cases**:
 - All sources return nothing -- error must list ALL missing required fields, not just the first one
 - `authMethod` is set but corresponding credential env var is missing -- auth-specific error message
+- No storage fields provided -- application starts without global container client (sync-pairs-only mode)
 
 ---
 
@@ -430,10 +432,11 @@
 
 ### F4.1 Sync Pair Configuration Loading (P1)
 
-**Description**: Load repository-to-Azure-Storage sync pair definitions from a JSON or YAML configuration file. Each sync pair is self-contained with its own source repository credentials and its own Azure Storage destination.
+**Description**: Load repository-to-Azure-Storage sync pair definitions from a JSON or YAML configuration file or HTTP(S) URL. Each sync pair is self-contained with its own source repository credentials and its own Azure Storage destination.
 
 **Inputs**:
-- File path to a sync pair configuration file (`.json`, `.yaml`, or `.yml`)
+- Local file path or HTTP(S) URL to a sync pair configuration file (`.json`, `.yaml`, or `.yml`)
+- For Azure Blob Storage URLs, `AZURE_VENV_SAS_TOKEN` is auto-appended for authentication
 
 **Outputs**:
 - Parsed and validated `SyncPairConfig` object containing an array of `SyncPair` entries
@@ -558,6 +561,58 @@ repo-sync repo sync --sync-config <path>
 - Request body missing `syncPairs`: HTTP 400 with `REPO_MISSING_PARAMS`
 - Request body too large: handled by Express JSON parser limit
 - Timeout exceeded: HTTP 408 (or connection drop depending on timing)
+
+---
+
+### F4.4 List Sync Pairs -- CLI (P1)
+
+**Description**: List all configured sync pairs from a configuration file via the CLI command `repo list-sync-pairs`. Credentials are never exposed; only token expiry status is shown.
+
+**CLI Command**: `repo list-sync-pairs`
+
+**Inputs**:
+- `--sync-config <path>` (optional): Path to sync pair configuration file. Falls back to `AZURE_FS_SYNC_CONFIG_PATH` env var.
+
+**Outputs**:
+- `SyncPairListResult` containing:
+  - `totalPairs`: number of configured pairs
+  - `configPath`: resolved path to the configuration file
+  - `syncPairs`: array of `SyncPairSummary` objects (name, platform, source, ref, destination details, token expiry status)
+
+**Behavior**:
+- Resolve config path: `--sync-config` flag > `AZURE_FS_SYNC_CONFIG_PATH` env var
+- Load and validate config via `loadSyncPairConfig()`
+- Build summaries via `summarizeSyncPairs()` with masked credentials
+- Token status computed per pair: "valid", "expiring-soon", "expired", or "no-expiry-set"
+
+**Edge cases**:
+- No config path provided: ConfigError with guidance to use `--sync-config` or env var
+- Config file not found: ConfigError
+- Config file invalid: ConfigError with parse details
+
+---
+
+### F4.5 List Sync Pairs -- API (P1)
+
+**Description**: List all configured sync pairs via the REST API endpoint `GET /api/v1/repo/sync-pairs`. Reads from the server's `AZURE_FS_SYNC_CONFIG_PATH`. Credentials are never included in the response.
+
+**Endpoint**: `GET /api/v1/repo/sync-pairs`
+
+**Outputs**:
+- HTTP 200: Sync pairs listed successfully with `SyncPairListResult` in standard envelope
+- HTTP 400: `AZURE_FS_SYNC_CONFIG_PATH` not configured
+- HTTP 500: Config file read/parse failure
+
+**Behavior**:
+- Read config path from `process.env.AZURE_FS_SYNC_CONFIG_PATH`
+- If not configured, return 400 with clear error
+- Load and validate via `loadSyncPairConfig()`
+- Build summaries via `summarizeSyncPairs()` — no credentials in response
+- Token expiry status included per pair for monitoring
+
+**Edge cases**:
+- Env var not set: HTTP 400 with `CONFIG_MISSING`
+- Config file deleted after startup: HTTP 500 from file read error
 
 ---
 
@@ -712,7 +767,8 @@ repo-sync repo sync --sync-config <path>
 - Mount health check routes at `/api/health`
 - Conditionally mount Swagger UI at `/api/docs` when `api.swaggerEnabled` is true
 - Mount centralized error handler middleware last
-- Implement graceful shutdown on SIGTERM/SIGINT (stop accepting connections, wait for in-flight requests with 10s timeout)
+- Implement graceful shutdown on SIGTERM/SIGINT (stop azure-venv watcher, stop accepting connections, wait for in-flight requests with 10s timeout)
+- At bootstrap, use `watchAzureVenv()` instead of `initAzureVenv()` to enable continuous polling for blob changes in Azure Blob Storage. The watcher polls at a configurable interval (`AZURE_VENV_POLL_INTERVAL`, default 30s) and updates in-memory state when blob changes are detected.
 - Detect port-in-use (`EADDRINUSE`) and exit with clear error message
 
 **Edge cases**:
@@ -783,6 +839,7 @@ repo-sync repo sync --sync-config <path>
 | `POST` | `/api/v1/repo/github` | `replicateGitHub()` | Replicate GitHub repo to Azure Blob Storage |
 | `POST` | `/api/v1/repo/devops` | `replicateDevOps()` | Replicate Azure DevOps repo to Azure Blob Storage |
 | `POST` | `/api/v1/repo/sync` | `syncPairs()` | Execute batch sync pair replication |
+| `GET` | `/api/v1/repo/sync-pairs` | `listSyncPairs()` | List configured sync pairs with token status |
 
 **Behavior**:
 - GitHub and DevOps endpoints use a 5-minute timeout

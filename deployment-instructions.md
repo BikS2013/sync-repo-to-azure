@@ -6,27 +6,27 @@
 
 **Build image (native architecture):**
 ```bash
-docker build -t azure-fs-api .
+docker build -t sync-repo-to-azure .
 ```
 
 **Start container:**
 ```bash
-docker run -d --name azure-fs-api --env-file .env -e DOCKER_HOST_URL=http://localhost:4100 -p 4100:3000 azure-fs-api
+docker run -d --name sync-repo-to-azure --env-file .env -e DOCKER_HOST_URL=http://localhost:4100 -p 4100:3000 sync-repo-to-azure
 ```
 
 **Stop container:**
 ```bash
-docker stop azure-fs-api
+docker stop sync-repo-to-azure
 ```
 
 **Delete container:**
 ```bash
-docker rm azure-fs-api
+docker rm sync-repo-to-azure
 ```
 
 **Rebuild image (stop, delete, rebuild, redeploy):**
 ```bash
-docker stop azure-fs-api 2>/dev/null; docker rm azure-fs-api 2>/dev/null; docker rmi azure-fs-api 2>/dev/null; docker build -t azure-fs-api . && docker run -d --name azure-fs-api --env-file .env -e DOCKER_HOST_URL=http://localhost:4100 -p 4100:3000 azure-fs-api
+docker stop sync-repo-to-azure 2>/dev/null; docker rm sync-repo-to-azure 2>/dev/null; docker rmi sync-repo-to-azure 2>/dev/null; docker build -t sync-repo-to-azure . && docker run -d --name sync-repo-to-azure --env-file .env -e DOCKER_HOST_URL=http://localhost:4100 -p 4100:3000 sync-repo-to-azure
 ```
 
 ### Multi-Architecture Build (amd64 + arm64)
@@ -41,7 +41,7 @@ docker buildx inspect --bootstrap
 
 **Build and load locally (current platform only):**
 ```bash
-docker buildx build --platform linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') -t azure-fs-api --load .
+docker buildx build --platform linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') -t sync-repo-to-azure --load .
 ```
 
 **Build dual-arch and push to Azure Container Registry (ACR):**
@@ -52,8 +52,8 @@ az acr login --name 914dockerregistry
 # Build and push both architectures
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t 914dockerregistry.azurecr.io/azure-fs-api:latest \
-  -t 914dockerregistry.azurecr.io/azure-fs-api:$(date +%Y%m%d) \
+  -t 914dockerregistry.azurecr.io/sync-repo-to-azure:latest \
+  -t 914dockerregistry.azurecr.io/sync-repo-to-azure:$(date +%Y%m%d) \
   --push .
 ```
 
@@ -61,7 +61,7 @@ docker buildx build \
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t <your-dockerhub-user>/azure-fs-api:latest \
+  -t <your-dockerhub-user>/sync-repo-to-azure:latest \
   --push .
 ```
 
@@ -75,26 +75,26 @@ docker buildx build \
 |---------|-------|
 | **Resource Group** | `BikSTestRG` |
 | **App Service Plan** | `azure-webapp-plan` (B1, Linux) |
-| **Web App Name** | `azure-fs-api` |
+| **Web App Name** | `sync-repo-to-azure` |
 | **Region** | West Europe |
-| **URL** | `https://azure-fs-api.azurewebsites.net` |
-| **Health** | `https://azure-fs-api.azurewebsites.net/api/health` |
-| **Readiness** | `https://azure-fs-api.azurewebsites.net/api/health/ready` |
-| **Swagger UI** | `https://azure-fs-api.azurewebsites.net/api/docs` |
-| **Swagger JSON** | `https://azure-fs-api.azurewebsites.net/api/docs.json` |
-| **Image** | `914dockerregistry.azurecr.io/azure-fs-api:latest` |
+| **URL** | `https://sync-repo-to-azure.azurewebsites.net` |
+| **Health** | `https://sync-repo-to-azure.azurewebsites.net/api/health` |
+| **Readiness** | `https://sync-repo-to-azure.azurewebsites.net/api/health/ready` |
+| **Swagger UI** | `https://sync-repo-to-azure.azurewebsites.net/api/docs` |
+| **Swagger JSON** | `https://sync-repo-to-azure.azurewebsites.net/api/docs.json` |
+| **Image** | `914dockerregistry.azurecr.io/sync-repo-to-azure:latest` |
 | **NODE_ENV** | `development` (dev routes + hotkey endpoints enabled) |
 
 **Quick redeploy after image push:**
 ```bash
 # Push new image
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t 914dockerregistry.azurecr.io/azure-fs-api:latest \
-  -t 914dockerregistry.azurecr.io/azure-fs-api:$(date +%Y%m%d) \
+  -t 914dockerregistry.azurecr.io/sync-repo-to-azure:latest \
+  -t 914dockerregistry.azurecr.io/sync-repo-to-azure:$(date +%Y%m%d) \
   --push .
 
 # Restart to pull latest
-az webapp restart --name azure-fs-api --resource-group BikSTestRG
+az webapp restart --name sync-repo-to-azure --resource-group BikSTestRG
 ```
 
 **Deploy from ACR to Azure App Service (reference commands):**
@@ -111,7 +111,7 @@ az webapp create \
   --name <your-app-name> \
   --resource-group <your-rg> \
   --plan azure-webapp-plan \
-  --deployment-container-image-name 914dockerregistry.azurecr.io/azure-fs-api:latest
+  --deployment-container-image-name 914dockerregistry.azurecr.io/sync-repo-to-azure:latest
 
 # Configure environment variables
 az webapp config appsettings set \
@@ -165,7 +165,7 @@ az role assignment create \
 - **Non-root user**: Runs as the `node` user for security
 - **Health check**: Built-in `wget` check against `/api/health` every 30s
 - **Exposed port**: 3000 (configurable via `AZURE_FS_API_PORT` env var)
-- **OCI labels**: Standard `org.opencontainers.image.*` labels for registry metadata
+- **OCI labels**: Standard `org.opencontainers.image.*` labels for registry metadata (`sync-repo-to-azure`)
 
 ### Docker Files
 

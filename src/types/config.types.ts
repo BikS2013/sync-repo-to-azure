@@ -100,7 +100,7 @@ export interface CliOptions {
  * No fallback/default values are used -- every field must be explicitly provided.
  */
 export interface ResolvedConfig {
-  storage: {
+  storage?: {
     accountUrl: string;
     containerName: string;
     authMethod: AuthMethod;

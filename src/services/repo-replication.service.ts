@@ -56,11 +56,11 @@ const SMALL_FILE_THRESHOLD = 4 * 1024 * 1024; // 4 MB
  * the Node.js stream pipeline.
  */
 export class RepoReplicationService {
-  private readonly containerClient: ContainerClient;
+  private readonly containerClient: ContainerClient | null;
   private readonly config: ResolvedConfig;
   private readonly logger: Logger;
 
-  constructor(config: ResolvedConfig, containerClient: ContainerClient, logger: Logger) {
+  constructor(config: ResolvedConfig, containerClient: ContainerClient | null, logger: Logger) {
     this.config = config;
     this.containerClient = containerClient;
     this.logger = logger;
@@ -81,6 +81,16 @@ export class RepoReplicationService {
   async replicateGitHub(
     params: GitHubRepoParams,
   ): Promise<RepoReplicationResult> {
+    if (!this.containerClient) {
+      throw new RepoReplicationError(
+        "REPO_NO_GLOBAL_STORAGE",
+        "Cannot replicate a single repository without global Azure Storage configuration. " +
+        "Set AZURE_STORAGE_ACCOUNT_URL, AZURE_STORAGE_CONTAINER_NAME, and AZURE_FS_AUTH_METHOD, " +
+        "or use sync pairs with per-pair storage credentials.",
+        400,
+      );
+    }
+
     const totalStart = Date.now();
 
     const [owner, repo] = this.parseGitHubRepo(params.repo);
@@ -149,6 +159,16 @@ export class RepoReplicationService {
   async replicateDevOps(
     params: DevOpsRepoParams,
   ): Promise<RepoReplicationResult> {
+    if (!this.containerClient) {
+      throw new RepoReplicationError(
+        "REPO_NO_GLOBAL_STORAGE",
+        "Cannot replicate a single repository without global Azure Storage configuration. " +
+        "Set AZURE_STORAGE_ACCOUNT_URL, AZURE_STORAGE_CONTAINER_NAME, and AZURE_FS_AUTH_METHOD, " +
+        "or use sync pairs with per-pair storage credentials.",
+        400,
+      );
+    }
+
     const totalStart = Date.now();
 
     const repoIdentifier = `${params.organization}/${params.project}/${params.repository}`;
@@ -413,7 +433,7 @@ export class RepoReplicationService {
     repoIdentifier: string,
     containerClient?: ContainerClient,
   ): Promise<StreamingStats> {
-    const client = containerClient ?? this.containerClient;
+    const client = containerClient ?? this.containerClient!;
     const stats: StreamingStats = {
       totalFiles: 0,
       successCount: 0,
@@ -543,7 +563,7 @@ export class RepoReplicationService {
     repoIdentifier: string,
     containerClient?: ContainerClient,
   ): Promise<StreamingStats> {
-    const client = containerClient ?? this.containerClient;
+    const client = containerClient ?? this.containerClient!;
     const stats: StreamingStats = {
       totalFiles: 0,
       successCount: 0,

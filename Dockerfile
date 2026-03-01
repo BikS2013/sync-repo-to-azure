@@ -15,6 +15,9 @@ RUN npm ci
 COPY src/ ./src/
 COPY tsconfig.json ./
 
+# Build azure-venv dependency (GitHub source package, no prebuilt dist)
+RUN cd node_modules/azure-venv && npx tsc || true
+
 # Compile TypeScript to JavaScript
 RUN npm run build
 
@@ -24,11 +27,11 @@ RUN npm run build
 FROM node:20-alpine AS production
 
 # Add labels for image identification (OCI standard labels)
-LABEL maintainer="azure-fs"
-LABEL description="Azure Blob Storage File System REST API"
-LABEL org.opencontainers.image.title="azure-fs-api"
-LABEL org.opencontainers.image.description="REST API for Azure Blob Storage virtual file system"
-LABEL org.opencontainers.image.source="https://github.com/azure-fs"
+LABEL maintainer="repo-sync"
+LABEL description="Repository Sync to Azure Blob Storage REST API"
+LABEL org.opencontainers.image.title="sync-repo-to-azure"
+LABEL org.opencontainers.image.description="REST API for replicating GitHub and Azure DevOps repositories to Azure Blob Storage"
+LABEL org.opencontainers.image.source="https://github.com/sync-repo-to-azure"
 
 WORKDIR /app
 
@@ -40,6 +43,12 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy compiled JavaScript from builder stage
 COPY --from=builder /app/dist ./dist
+
+# Copy built azure-venv dist (GitHub source package, not prebuilt)
+COPY --from=builder /app/node_modules/azure-venv/dist ./node_modules/azure-venv/dist
+
+# Grant ownership to node user so azure-venv can write synced files
+RUN chown -R node:node /app
 
 # Run as non-root user for security
 USER node

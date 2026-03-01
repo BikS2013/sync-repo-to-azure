@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { ApiServices } from "../routes/index";
+import { getAzureVenvIntrospection, getWatchStatus } from "../../utils/azure-venv-holder.utils";
 
 /**
  * Sensitive key patterns. If an environment variable name contains any of these
@@ -112,6 +113,44 @@ export function createDevController(services: ApiServices) {
      * Get a specific environment variable by name.
      * The key is normalized to uppercase for lookup.
      */
+    /**
+     * GET /api/dev/azure-venv
+     *
+     * Inspect the azure-venv sync result: blobs (without content), file tree,
+     * env variable sources (without values), and tier counts.
+     */
+    getAzureVenv(_req: Request, res: Response): void {
+      if (config.api.nodeEnv !== "development") {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: "FORBIDDEN",
+            message: "This endpoint is only available in development mode.",
+          },
+          metadata: { timestamp: new Date().toISOString() },
+        });
+        return;
+      }
+
+      const data = getAzureVenvIntrospection();
+      const watchStatus = getWatchStatus();
+
+      if (!data) {
+        res.json({
+          success: true,
+          data: { status: "not-initialized", watching: watchStatus.watching },
+          metadata: { timestamp: new Date().toISOString() },
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: { ...data, watching: watchStatus.watching },
+        metadata: { timestamp: new Date().toISOString() },
+      });
+    },
+
     getEnvVar(req: Request, res: Response): void {
       // Defense in depth: verify NODE_ENV
       if (config.api.nodeEnv !== "development") {

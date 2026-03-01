@@ -59,9 +59,9 @@ Read `deployment-instructions.md` when you need to build Docker images, deploy t
 | `AZURE_DEVOPS_ORG_URL` | Default Azure DevOps organization URL (e.g., https://dev.azure.com/myorg) |
 | `AZURE_DEVOPS_PAT` | Azure DevOps Personal Access Token for repo replication |
 | `AZURE_DEVOPS_PAT_EXPIRY` | Azure DevOps PAT expiry in ISO 8601 format (optional, warns 7 days before expiry) |
-| `AZURE_STORAGE_ACCOUNT_URL` | Storage account URL |
-| `AZURE_STORAGE_CONTAINER_NAME` | Default container name |
-| `AZURE_FS_AUTH_METHOD` | Auth method: connection-string, sas-token, azure-ad |
+| `AZURE_STORAGE_ACCOUNT_URL` | Storage account URL (optional for sync-pairs-only deployments) |
+| `AZURE_STORAGE_CONTAINER_NAME` | Default container name (optional for sync-pairs-only deployments) |
+| `AZURE_FS_AUTH_METHOD` | Auth method: connection-string, sas-token, azure-ad (optional for sync-pairs-only deployments) |
 | `AZURE_STORAGE_CONNECTION_STRING` | Connection string (for connection-string auth) |
 | `AZURE_STORAGE_SAS_TOKEN` | SAS token (for sas-token auth) |
 | `AZURE_STORAGE_SAS_TOKEN_EXPIRY` | SAS token expiry in ISO 8601 format (required for sas-token auth) |
@@ -73,9 +73,9 @@ Read `deployment-instructions.md` when you need to build Docker images, deploy t
 | `AZURE_FS_RETRY_MAX_RETRIES` | Maximum number of retries |
 | `AZURE_FS_RETRY_INITIAL_DELAY_MS` | Initial retry delay in ms |
 | `AZURE_FS_RETRY_MAX_DELAY_MS` | Maximum retry delay in ms |
-| `AZURE_VENV` | Azure Blob Storage URL for remote config sync (format: `https://<account>.blob.core.windows.net/<container>/<prefix>`) |
-| `AZURE_VENV_SAS_TOKEN` | SAS token with Read + List permissions for azure-venv (no leading `?`) |
+| `AZURE_VENV_SAS_TOKEN` | SAS token for Azure Blob Storage URL-based config fetching (no leading `?`). Auto-appended to `.blob.core.windows.net` URLs. |
 | `AZURE_VENV_SAS_EXPIRY` | SAS token expiry in ISO 8601 format for proactive warnings (optional) |
+| `AZURE_VENV_POLL_INTERVAL` | Watch mode polling interval in milliseconds (default: 30000, range: 5000-3600000) |
 | `AZURE_FS_API_PORT` | REST API server port (e.g., 3000) |
 | `AZURE_FS_API_HOST` | REST API server bind host (e.g., 0.0.0.0) |
 | `AZURE_FS_API_CORS_ORIGINS` | Comma-separated allowed CORS origins (e.g., * or specific URLs) |
@@ -92,7 +92,7 @@ Read `deployment-instructions.md` when you need to build Docker images, deploy t
 | `K8S_SERVICE_PORT` | Auto-injected by Kubernetes (used for Swagger URL detection) |
 | `DOCKER_HOST_URL` | Docker container public URL for Swagger URL detection (optional) |
 | `AZURE_FS_API_USE_HTTPS` | Force HTTPS for Kubernetes environments: true/false (optional) |
-| `AZURE_FS_SYNC_CONFIG_PATH` | Path to sync pair configuration file (JSON/YAML). Overridden by CLI `--sync-config` flag. |
+| `AZURE_FS_SYNC_CONFIG_PATH` | Local path or HTTP(S) URL to sync pair configuration file (JSON/YAML). For Azure Blob URLs, `AZURE_VENV_SAS_TOKEN` is auto-appended. Overridden by CLI `--sync-config` flag. |
 
 ## Authentication Methods
 
@@ -144,7 +144,6 @@ src/
     command-result.types.ts         - CommandResult<T>
     errors.types.ts                 - Error code enums
     repo-replication.types.ts       - RepoReplicationResult, GitHubRepoParams, DevOpsRepoParams, SyncPair*, SyncPairConfig, SyncPairBatchResult
-    azure-venv.d.ts                 - Azure venv type declarations
   errors/
     base.error.ts                   - AzureFsError base class
     config.error.ts                 - ConfigError
@@ -158,4 +157,5 @@ src/
     port-checker.utils.ts           - TCP port availability check and process identification
     console-commands.utils.ts       - Interactive console hotkeys for development/debugging
     token-expiry.utils.ts           - Token expiry checking utility
+    azure-venv-holder.utils.ts      - In-memory holder for azure-venv SyncResult and watch lifecycle
 ```

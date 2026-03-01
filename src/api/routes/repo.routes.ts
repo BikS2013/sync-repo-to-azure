@@ -572,5 +572,115 @@ export function createRepoRoutes(services: ApiServices): Router {
    */
   router.post("/sync", createTimeoutMiddleware(1800000), controller.syncPairs);
 
+  /**
+   * @openapi
+   * /api/v1/repo/sync-pairs:
+   *   get:
+   *     operationId: listSyncPairs
+   *     summary: List configured sync pairs
+   *     description: |
+   *       Returns a summary of all sync pairs from the server's configured sync pair
+   *       configuration file (AZURE_FS_SYNC_CONFIG_PATH). Credentials are never included
+   *       in the response; only token expiry status is reported.
+   *     tags: [Repository Replication]
+   *     responses:
+   *       200:
+   *         description: Sync pairs listed successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     totalPairs:
+   *                       type: integer
+   *                       example: 3
+   *                     configPath:
+   *                       type: string
+   *                       example: "/app/sync-settings.json"
+   *                     syncPairs:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           name:
+   *                             type: string
+   *                             example: "my-github-repo"
+   *                           platform:
+   *                             type: string
+   *                             enum: [github, azure-devops]
+   *                           source:
+   *                             type: string
+   *                             example: "owner/repo"
+   *                           ref:
+   *                             type: string
+   *                             example: "main"
+   *                           destination:
+   *                             type: object
+   *                             properties:
+   *                               accountUrl:
+   *                                 type: string
+   *                                 example: "https://myaccount.blob.core.windows.net"
+   *                               container:
+   *                                 type: string
+   *                                 example: "my-container"
+   *                               folder:
+   *                                 type: string
+   *                                 example: "repos/my-repo"
+   *                           tokenStatus:
+   *                             type: object
+   *                             properties:
+   *                               sourceToken:
+   *                                 type: string
+   *                                 enum: [valid, expiring-soon, expired, no-expiry-set]
+   *                               destinationSasToken:
+   *                                 type: string
+   *                                 enum: [valid, expiring-soon, expired, no-expiry-set]
+   *                 metadata:
+   *                   type: object
+   *                   properties:
+   *                     command:
+   *                       type: string
+   *                       example: "repo-list-sync-pairs"
+   *                     timestamp:
+   *                       type: string
+   *                       format: date-time
+   *                     durationMs:
+   *                       type: integer
+   *       400:
+   *         description: Sync pair configuration not configured on server
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 error:
+   *                   type: object
+   *                   properties:
+   *                     code:
+   *                       type: string
+   *                       example: "CONFIG_MISSING"
+   *                     message:
+   *                       type: string
+   *                       example: "AZURE_FS_SYNC_CONFIG_PATH environment variable is not configured."
+   *                 metadata:
+   *                   type: object
+   *                   properties:
+   *                     timestamp:
+   *                       type: string
+   *                       format: date-time
+   *       500:
+   *         description: Internal server error (file read or parse failure)
+   */
+  router.get("/sync-pairs", controller.listSyncPairs);
+
   return router;
 }

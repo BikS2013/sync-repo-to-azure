@@ -40,7 +40,7 @@
 │  repo-sync <command> [args] [--json] [--verbose] [--config path] │
 │                                                                  │
 │  Commands: config | repo clone-github | repo clone-devops |      │
-│            repo sync                                             │
+│            repo sync | repo list-sync-pairs                      │
 └────────────────────────────┬─────────────────────────────────────┘
                              │
                              │ resolves config, creates service
@@ -278,6 +278,8 @@ User/Agent invokes: repo-sync repo clone-github --repo owner/repo --dest repos/m
 
 **Rationale**: Per project conventions. Prevents silent misconfiguration where a default value causes the tool to connect to the wrong resource.
 
+**Exception — Optional Global Storage**: The global storage section (`storage.accountUrl`, `storage.containerName`, `storage.authMethod`) is optional for sync-pairs-only deployments. When no storage fields are provided, the application starts in sync-pairs-only mode where single-repo commands (`clone-github`, `clone-devops`) are unavailable but sync pair operations work using per-pair credentials. If any storage field is provided, all required storage fields must be present (partial configuration throws `ConfigError`).
+
 ### 6.2 Service Layer Abstraction
 
 **Decision**: All Azure SDK operations are wrapped in service classes, never called directly from command handlers.
@@ -398,7 +400,7 @@ src/api/
   routes/
     index.ts                   - Route registration barrel
     health.routes.ts           - GET /api/health, GET /api/health/ready
-    repo.routes.ts             - POST /api/v1/repo/github, /api/v1/repo/devops, /api/v1/repo/sync
+    repo.routes.ts             - POST /api/v1/repo/github, /api/v1/repo/devops, /api/v1/repo/sync, GET /api/v1/repo/sync-pairs
     hotkeys.routes.ts          - Remote console hotkey actions (POST/GET /api/dev/hotkeys/*)
     dev.routes.ts              - /api/dev/env development-only routes
   controllers/
@@ -440,7 +442,7 @@ HTTP Request
 
 Services are instantiated **once** at server startup and injected into controllers via closures:
 
-0. `initAzureVenv()` syncs remote files and environment variables from Azure Blob Storage (no-op if `AZURE_VENV` is not set). This runs **before** any config resolution so that remote `.env` values are available in `process.env`.
+0. `watchAzureVenv()` performs initial sync of remote files and environment variables from Azure Blob Storage (no-op if `AZURE_VENV` is not set), then starts a background polling watcher that detects blob changes and updates in-memory state. This runs **before** any config resolution so that remote `.env` values are available in `process.env`. The watcher stop function is stored in `azure-venv-holder` for graceful shutdown.
 1. `loadApiConfig()` resolves and validates configuration (base + API section)
 2. `new Logger(config.logging.level)` creates a shared logger
 3. `new RepoReplicationService(containerClient, logger)` creates the replication service
@@ -448,7 +450,7 @@ Services are instantiated **once** at server startup and injected into controlle
 5. `createApp(config, repoService, logger, actualPort, consoleCommands)` builds the Express app with services injected
 6. `app.listen(config.api.port, config.api.host)` starts the HTTP server
 7. After `server.listen()`: `ConsoleCommands.setup()` is called to start the readline interface
-8. On graceful shutdown: `ConsoleCommands.cleanup()` restores console methods and closes the readline interface
+8. On graceful shutdown: `stopWatch()` stops the azure-venv polling watcher, `ConsoleCommands.cleanup()` restores console methods and closes the readline interface
 
 ### 9.5 Configuration Extension
 
@@ -1141,6 +1143,11 @@ repo-sync repo clone-devops \
 repo-sync repo sync \
   --sync-config ./sync-pairs.yaml \
   [--json] [--verbose]
+
+# List configured sync pairs
+repo-sync repo list-sync-pairs \
+  --sync-config ./sync-pairs.yaml \
+  [--json] [--verbose]
 ```
 
 **Exit Code Mapping:**
@@ -1161,6 +1168,7 @@ repo-sync repo sync \
 | `POST /api/v1/repo/github` | POST | 5 min | Replicate a GitHub repository |
 | `POST /api/v1/repo/devops` | POST | 5 min | Replicate an Azure DevOps repository |
 | `POST /api/v1/repo/sync` | POST | 30 min | Execute sync pair batch replication |
+| `GET /api/v1/repo/sync-pairs` | GET | 5 min | List configured sync pairs with token status |
 
 #### 11.9.2 Timeout Handling
 
@@ -1342,7 +1350,7 @@ src/
   commands/
     index.ts                        - Command registration barrel
     config.commands.ts              - config init | show | validate
-    repo.commands.ts                - repo clone-github | clone-devops | sync
+    repo.commands.ts                - repo clone-github | clone-devops | sync | list-sync-pairs
   services/
     auth.service.ts                 - Authentication factory (3 methods + sync pair client)
     path.service.ts                 - Path normalization and validation

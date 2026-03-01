@@ -283,6 +283,54 @@
     </info>
 </repo-sync-sync>
 
+<repo-sync-list-sync-pairs>
+    <objective>
+        List configured sync pairs from a sync pair configuration file with token expiry status
+    </objective>
+    <command>
+        repo-sync repo list-sync-pairs [--sync-config <path>] [--json] [--verbose]
+    </command>
+    <info>
+        Reads a sync pair configuration file (JSON or YAML) and displays a summary of all
+        configured sync pairs. Credentials (tokens, PATs, SAS tokens) are never shown in the
+        output. Instead, token expiry status is reported for each credential: "valid",
+        "expiring-soon" (within 7 days), "expired", or "no-expiry-set".
+
+        This command is useful for inspecting what sync pairs are configured without
+        executing any replication operations.
+
+        Config path resolution (same as repo sync):
+          --sync-config flag > AZURE_FS_SYNC_CONFIG_PATH env var
+
+        Options:
+          --sync-config <path>  Path to sync pair configuration file (optional if env var is set)
+          --json                Output result as structured JSON
+          -v, --verbose         Enable verbose logging
+
+        Output fields (JSON mode):
+          totalPairs            Total number of configured sync pairs
+          configPath            Resolved path to the configuration file
+          syncPairs             Array of sync pair summaries:
+            name                Sync pair name
+            platform            "github" or "azure-devops"
+            source              Source repository identifier (e.g., "owner/repo" or "org/project/repo")
+            ref                 Git ref if specified
+            destination         Object with accountUrl, container, folder
+            tokenStatus         Object with sourceToken and destinationSasToken status
+
+        Examples:
+          # List sync pairs from a JSON config
+          repo-sync repo list-sync-pairs --sync-config ./sync-settings.json
+
+          # List sync pairs using env var for config path
+          export AZURE_FS_SYNC_CONFIG_PATH=./sync-settings.json
+          repo-sync repo list-sync-pairs
+
+          # List sync pairs with JSON output
+          repo-sync repo list-sync-pairs --sync-config ./sync-settings.json --json
+    </info>
+</repo-sync-list-sync-pairs>
+
 ## Global CLI Options
 
 | Flag | Short | Description |

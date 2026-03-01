@@ -30,8 +30,8 @@ export class GitHubClientService {
   constructor(configOrCredentials: ResolvedConfig | GitHubClientCredentials, logger: Logger) {
     this.logger = logger;
 
-    // Discriminate: ResolvedConfig has a 'storage' property, credentials do not
-    if ('storage' in configOrCredentials) {
+    // Discriminate: ResolvedConfig always has 'logging', credentials do not
+    if ('logging' in configOrCredentials) {
       // ResolvedConfig path (existing behavior - backward compatible)
       this.token = configOrCredentials.github?.token;
       checkTokenExpiry("GITHUB_TOKEN", configOrCredentials.github?.tokenExpiry, logger);

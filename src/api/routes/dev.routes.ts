@@ -65,6 +65,83 @@ export function createDevRoutes(services: ApiServices): Router {
 
   /**
    * @openapi
+   * /api/dev/azure-venv:
+   *   get:
+   *     operationId: getAzureVenvStatus
+   *     summary: Inspect azure-venv sync result
+   *     description: |
+   *       Returns the azure-venv introspection data including blob metadata (without content),
+   *       file tree, environment variable sources (without values), and tier counts.
+   *       Only available in development mode.
+   *     tags: [Development]
+   *     responses:
+   *       200:
+   *         description: Azure-venv introspection data
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     watching:
+   *                       type: boolean
+   *                       description: Whether the azure-venv watcher is actively polling for changes
+   *                     attempted:
+   *                       type: boolean
+   *                     totalBlobs:
+   *                       type: integer
+   *                     downloaded:
+   *                       type: integer
+   *                     failed:
+   *                       type: integer
+   *                     durationMs:
+   *                       type: number
+   *                     remoteEnvLoaded:
+   *                       type: boolean
+   *                     blobs:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           relativePath:
+   *                             type: string
+   *                           size:
+   *                             type: integer
+   *                           etag:
+   *                             type: string
+   *                           lastModified:
+   *                             type: string
+   *                     fileTree:
+   *                       type: array
+   *                     envSources:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           key:
+   *                             type: string
+   *                           source:
+   *                             type: string
+   *                     envTierCounts:
+   *                       type: object
+   *                       properties:
+   *                         os:
+   *                           type: integer
+   *                         remote:
+   *                           type: integer
+   *                         local:
+   *                           type: integer
+   *       403:
+   *         description: Not available outside development mode
+   */
+  router.get("/azure-venv", controller.getAzureVenv);
+
+  /**
+   * @openapi
    * /api/dev/env/{key}:
    *   get:
    *     operationId: getEnvVar

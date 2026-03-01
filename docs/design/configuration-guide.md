@@ -24,12 +24,14 @@ When a value is present in multiple sources, the highest-priority source wins. A
 
 ## Storage Configuration
 
+> **Note:** The storage configuration section is **optional for sync-pairs-only deployments**. When using only sync pairs (each pair provides its own per-pair Azure Storage credentials), the global storage settings (`accountUrl`, `containerName`, `authMethod`) can be omitted entirely. However, if **any** storage field is provided, **all** required storage fields must be present. Single-repo commands (`clone-github`, `clone-devops`) always require global storage configuration.
+
 ### `storage.accountUrl`
 
 | Attribute | Value |
 |-----------|-------|
 | **Purpose** | The full URL of the Azure Storage account that the tool connects to. This is the root endpoint for all blob operations (repository archive uploads). |
-| **Required** | Yes |
+| **Required** | Yes (for single-repo commands; optional for sync-pairs-only deployments) |
 | **Type** | String (URL) |
 | **Config file key** | `storage.accountUrl` |
 | **Environment variable** | `AZURE_STORAGE_ACCOUNT_URL` |
@@ -52,7 +54,7 @@ Store in the `.repo-sync.json` config file for project-level usage, or set as an
 | Attribute | Value |
 |-----------|-------|
 | **Purpose** | The name of the Azure Blob Storage container to operate on. Repository archives are uploaded to this container. |
-| **Required** | Yes |
+| **Required** | Yes (for single-repo commands; optional for sync-pairs-only deployments) |
 | **Type** | String |
 | **Config file key** | `storage.containerName` |
 | **Environment variable** | `AZURE_STORAGE_CONTAINER_NAME` |
@@ -74,7 +76,7 @@ Store in the `.repo-sync.json` config file. Use the CLI flag when you need to te
 | Attribute | Value |
 |-----------|-------|
 | **Purpose** | Determines which authentication mechanism the tool uses to connect to Azure Blob Storage. |
-| **Required** | Yes |
+| **Required** | Yes (for single-repo commands; optional for sync-pairs-only deployments) |
 | **Type** | String (enum) |
 | **Config file key** | `storage.authMethod` |
 | **Environment variable** | `AZURE_FS_AUTH_METHOD` |
@@ -753,9 +755,9 @@ Store in the `.env` file. Useful when most of your DevOps operations target a si
 
 | Attribute | Value |
 |-----------|-------|
-| **Purpose** | Path to the sync pair configuration file (JSON or YAML). Overridden by the CLI `--sync-config` flag. |
+| **Purpose** | Local path or HTTP(S) URL to the sync pair configuration file (JSON or YAML). For Azure Blob Storage URLs, `AZURE_VENV_SAS_TOKEN` is auto-appended for authentication. Overridden by the CLI `--sync-config` flag. |
 | **Required** | No (optional; can be provided via CLI flag instead) |
-| **Type** | String (file path) |
+| **Type** | String (file path or URL) |
 | **Environment variable** | `AZURE_FS_SYNC_CONFIG_PATH` |
 | **CLI flag** | `--sync-config` |
 | **Config file key** | Not available |
@@ -834,9 +836,9 @@ The config file (`.repo-sync.json`) is the recommended way to store non-secret c
 | `AZURE_FS_API_SWAGGER_ADDITIONAL_SERVERS` | `api.swaggerAdditionalServers` | No (optional) |
 | `AZURE_FS_API_SWAGGER_SERVER_VARIABLES` | `api.swaggerServerVariables` | No (optional) |
 | `AZURE_FS_SYNC_CONFIG_PATH` | Sync pair config file path | No (optional) |
-| `AZURE_VENV` | Azure Blob Storage URL for remote config sync | No (optional, both AZURE_VENV and AZURE_VENV_SAS_TOKEN must be set together) |
-| `AZURE_VENV_SAS_TOKEN` | SAS token for azure-venv (Read + List) | No (paired with AZURE_VENV) |
+| `AZURE_VENV_SAS_TOKEN` | SAS token for Azure Blob Storage URL-based config fetching | No (optional) |
 | `AZURE_VENV_SAS_EXPIRY` | SAS token expiry for proactive warnings | No (optional) |
+| `AZURE_VENV_POLL_INTERVAL` | Watch mode polling interval in ms (default: 30000) | No (optional) |
 | `PUBLIC_URL` | Swagger URL override | No (optional, auto-detection) |
 | `WEBSITE_HOSTNAME` | Swagger URL detection | No (auto-set by Azure App Service) |
 | `WEBSITE_SITE_NAME` | Swagger HTTPS detection | No (auto-set by Azure App Service) |
@@ -911,36 +913,12 @@ Use `repo-sync config show` to inspect the merged configuration without validati
 
 ---
 
-## Azure VENV (Remote Config Sync)
-
-The API integrates the `azure-venv` library to sync files and environment variables from Azure Blob Storage on startup. This enables centralized configuration management across environments. If neither `AZURE_VENV` nor `AZURE_VENV_SAS_TOKEN` is set, the library is a no-op and the API starts normally.
-
-### `AZURE_VENV`
-
-| Attribute | Value |
-|-----------|-------|
-| **Purpose** | Azure Blob Storage URL pointing to the remote config prefix. All blobs under this prefix are synced to the local app root on startup. A `.env` file under this prefix is loaded with three-tier precedence (OS env > remote .env > local .env). |
-| **Required** | Yes (both `AZURE_VENV` and `AZURE_VENV_SAS_TOKEN` must be set together, or both absent) |
-| **Type** | String (URL) |
-| **Environment variable** | `AZURE_VENV` |
-| **Format** | `https://<account>.blob.core.windows.net/<container>/<prefix>` |
-
-**How to obtain:**
-Compose the URL from your Azure Storage account name, container name, and the virtual directory prefix where your config files are stored.
-
-**Example:** `https://myaccount.blob.core.windows.net/config/repo-sync/prod` syncs all blobs under the `config/repo-sync/prod/` prefix.
-
-**Recommended management:**
-Store in the `.env` file. Use different values per environment (dev/staging/prod) to point to different config prefixes.
-
----
-
 ### `AZURE_VENV_SAS_TOKEN`
 
 | Attribute | Value |
 |-----------|-------|
-| **Purpose** | SAS token granting Read and List permissions to the blob container referenced in `AZURE_VENV`. |
-| **Required** | Yes (paired with `AZURE_VENV`) |
+| **Purpose** | SAS token for Azure Blob Storage. Auto-appended to `.blob.core.windows.net` URLs when fetching sync pair configuration via `AZURE_FS_SYNC_CONFIG_PATH` or `--sync-config`. |
+| **Required** | No (only needed when `AZURE_FS_SYNC_CONFIG_PATH` is an Azure Blob Storage URL) |
 | **Type** | String (no leading `?`) |
 | **Environment variable** | `AZURE_VENV_SAS_TOKEN` |
 
@@ -968,8 +946,8 @@ Or via Azure Portal: Storage Account > Shared access signature (select Read + Li
 
 | Attribute | Value |
 |-----------|-------|
-| **Purpose** | The expiration date of the `AZURE_VENV_SAS_TOKEN`. When set, the library warns 7 days before expiry. |
-| **Required** | No (optional, but recommended) |
+| **Purpose** | The expiration date of the `AZURE_VENV_SAS_TOKEN`. Used for proactive expiry warnings. |
+| **Required** | No (optional, but recommended when using `AZURE_VENV_SAS_TOKEN`) |
 | **Type** | String (ISO 8601 date, e.g., `2027-12-31T00:00:00Z`) |
 | **Environment variable** | `AZURE_VENV_SAS_EXPIRY` |
 
@@ -978,17 +956,32 @@ Always set when using `AZURE_VENV_SAS_TOKEN` to get proactive expiry warnings. U
 
 ---
 
-### Environment Variable Precedence (azure-venv)
+### `AZURE_VENV_POLL_INTERVAL`
 
-When `azure-venv` is active, environment variables are resolved in this order (highest wins):
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | Controls how frequently the azure-venv watch mode polls Azure Blob Storage for changes. Only used in API server mode where the watcher runs continuously. |
+| **Required** | No (optional) |
+| **Type** | Number (milliseconds) |
+| **Default** | `30000` (30 seconds) |
+| **Valid range** | `5000` (5 seconds) to `3600000` (1 hour) |
+| **Environment variable** | `AZURE_VENV_POLL_INTERVAL` |
 
-| Priority | Source | Description |
-|----------|--------|-------------|
-| 1 (highest) | **OS environment** | Variables already in `process.env` before any `.env` loading |
-| 2 | **Remote `.env`** | Downloaded from Azure Blob Storage (`<prefix>/.env`) |
-| 3 (lowest) | **Local `.env`** | On disk at the project root |
+**How to obtain:**
+Choose based on how frequently your Azure Blob Storage blobs change and your tolerance for stale data. Lower values detect changes faster but increase Azure API calls.
 
-This means OS-level environment variables (e.g., set in Docker Compose, Azure App Service, or CI/CD) always take precedence over remote or local `.env` files.
+**Recommended management:**
+- For development: use default or lower (e.g., `10000`)
+- For production: use default (`30000`) or higher depending on change frequency
+- Set via environment variable in `.env` or container environment
+
+**Options:**
+| Value | Meaning |
+|-------|---------|
+| `5000` | Aggressive polling (5 seconds) — for active development |
+| `30000` | Default — balanced between freshness and API usage |
+| `60000` | Conservative (1 minute) — for production environments with infrequent changes |
+| `300000` | Very conservative (5 minutes) — for stable configurations |
 
 ---
 

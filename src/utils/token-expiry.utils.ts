@@ -1,8 +1,41 @@
 import { ConfigError } from "../errors/config.error";
 import { Logger } from "./logger.utils";
+import { TokenExpiryStatus } from "../types/repo-replication.types";
 
 /** Number of days before expiry to start warning */
 const EXPIRY_WARNING_DAYS = 7;
+
+/**
+ * Compute a token expiry status without throwing.
+ *
+ * @param expiryDateStr - ISO 8601 date string, or undefined
+ * @returns TokenExpiryStatus: "valid", "expiring-soon", "expired", or "no-expiry-set"
+ */
+export function getTokenExpiryStatus(
+  expiryDateStr: string | undefined,
+): TokenExpiryStatus {
+  if (expiryDateStr === undefined) {
+    return "no-expiry-set";
+  }
+
+  const expiryDate = new Date(expiryDateStr);
+  if (isNaN(expiryDate.getTime())) {
+    return "no-expiry-set";
+  }
+
+  const now = new Date();
+  const daysUntilExpiry = Math.floor(
+    (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  if (daysUntilExpiry < 0) {
+    return "expired";
+  }
+  if (daysUntilExpiry <= EXPIRY_WARNING_DAYS) {
+    return "expiring-soon";
+  }
+  return "valid";
+}
 
 /**
  * Check a token expiry date and either warn or throw.

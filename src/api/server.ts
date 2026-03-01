@@ -1,6 +1,3 @@
-import * as dotenv from "dotenv";
-dotenv.config();
-
 import express, { Express } from "express";
 import cors from "cors";
 import * as http from "http";
@@ -95,44 +92,26 @@ export function createApp(
  *   6. Register graceful shutdown handlers
  */
 export async function startServer(): Promise<void> {
-  // 0. Sync remote files and env vars from Azure Blob Storage (before any config reads)
-  //    If AZURE_VENV is not configured, this is a no-op and returns immediately.
-  //    Dynamic import required: azure-venv is an ESM package, this project is CommonJS.
-  try {
-    const azureVenv = await import("azure-venv");
-    const syncResult = await azureVenv.initAzureVenv({ failOnError: true });
-    if (syncResult.attempted) {
-      const msg = `azure-venv: ${syncResult.downloaded} downloaded, ${syncResult.skipped} skipped, ${syncResult.failed} failed in ${syncResult.duration}ms`;
-      process.stdout.write(`${msg}\n`);
-    }
-  } catch (error) {
-    // ConfigurationError and AuthenticationError always throw regardless of failOnError
-    const errorName = error instanceof Error ? error.constructor.name : "";
-    if (errorName === "ConfigurationError") {
-      process.stderr.write(`azure-venv configuration error: ${(error as Error).message}\n`);
-      process.exit(2);
-    }
-    if (errorName === "AuthenticationError") {
-      process.stderr.write(`azure-venv authentication error (SAS token expired or invalid): ${(error as Error).message}\n`);
-      process.exit(2);
-    }
-    // Module not found = azure-venv not installed or not built; skip silently
-    const errorCode = (error as NodeJS.ErrnoException).code;
-    if (errorCode === "MODULE_NOT_FOUND" || errorCode === "ERR_MODULE_NOT_FOUND") {
-      // azure-venv package not available — continue without remote config sync
-    } else {
-      throw error;
-    }
-  }
-
   // 1. Load and validate all configuration (base + API section)
   const config = resolveApiConfig();
 
   // 2. Create logger
   const logger = new Logger(config.logging.level, false);
 
-  // 3. Create repo replication service (uses ContainerClient from auth.service)
-  const containerClient = createContainerClient(config);
+  // 3. Create repo replication service (global ContainerClient is optional for sync-pairs-only deployments)
+  let containerClient: import("@azure/storage-blob").ContainerClient | null = null;
+  if (config.storage) {
+    try {
+      containerClient = createContainerClient(config);
+      logger.info("Global Azure Storage container client initialized");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn(`Global Azure Storage container client not available: ${message}`);
+      logger.warn("Single-repo replication (clone-github, clone-devops) will be unavailable. Sync pairs with per-pair credentials will still work.");
+    }
+  } else {
+    logger.info("No global Azure Storage configuration — running in sync-pairs-only mode");
+  }
   const repoReplicationService = new RepoReplicationService(config, containerClient, logger);
 
   // 4. Check port availability (proactive port check)
@@ -238,6 +217,9 @@ export async function startServer(): Promise<void> {
     shutdownInProgress = true;
     logger.info(`Received ${signal}, shutting down gracefully...`);
 
+    // Stop azure-venv watcher
+    stopWatch();
+
     // Cleanup console hotkeys
     if (consoleCommands) {
       consoleCommands.cleanup();
@@ -263,7 +245,27 @@ export async function startServer(): Promise<void> {
 
 // --- Main entry point ---
 // When this file is executed directly (not imported), start the server.
-startServer().catch((err) => {
+// azure-venv must run first to load remote blobs + env vars before config resolution.
+import { watchAzureVenv } from "azure-venv";
+import { setAzureVenvResult, setWatchStopFn, stopWatch } from "../utils/azure-venv-holder.utils";
+
+async function bootstrap(): Promise<void> {
+  const { initialSync, stop } = await watchAzureVenv();
+  setAzureVenvResult(initialSync);
+  setWatchStopFn(stop);
+  if (initialSync.attempted) {
+    const pollInterval = process.env.AZURE_VENV_POLL_INTERVAL ?? "30000";
+    process.stdout.write(
+      `azure-venv: ${initialSync.downloaded} blobs read in ${initialSync.duration}ms\n`,
+    );
+    process.stdout.write(
+      `azure-venv: watching with poll interval ${pollInterval}ms\n`,
+    );
+  }
+  await startServer();
+}
+
+bootstrap().catch((err) => {
   process.stderr.write(`Failed to start API server: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(2);
 });

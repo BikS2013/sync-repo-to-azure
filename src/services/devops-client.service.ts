@@ -32,7 +32,8 @@ export class DevOpsClientService {
   constructor(configOrCredentials: ResolvedConfig | DevOpsClientCredentials, logger: Logger) {
     this.logger = logger;
 
-    if ('storage' in configOrCredentials) {
+    // Discriminate: ResolvedConfig always has 'logging', credentials do not
+    if ('logging' in configOrCredentials) {
       // ResolvedConfig path (existing behavior)
       this.pat = configOrCredentials.devops?.pat;
       this.orgUrl = configOrCredentials.devops?.orgUrl;

@@ -5,6 +5,8 @@ import { Logger } from "../../utils/logger.utils";
 import {
   validateSyncPairConfig,
   checkSyncPairTokenExpiry,
+  loadSyncPairConfig,
+  summarizeSyncPairs,
 } from "../../config/sync-pair.loader";
 
 /**
@@ -130,6 +132,45 @@ export function createRepoController(
       });
 
       res.status(200).json(buildResponse("repo-clone-devops", result, startTime));
+    },
+
+    /**
+     * GET /api/v1/repo/sync-pairs
+     * List configured sync pairs from the server's sync config file.
+     * Credentials are masked; token expiry status is included.
+     */
+    async listSyncPairs(
+      _req: Request,
+      res: Response,
+      _next: NextFunction,
+    ): Promise<void> {
+      const startTime = Date.now();
+
+      const configPath = process.env.AZURE_FS_SYNC_CONFIG_PATH;
+      if (!configPath) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: "CONFIG_MISSING",
+            message:
+              "AZURE_FS_SYNC_CONFIG_PATH environment variable is not configured. " +
+              "Cannot list sync pairs without a sync configuration file.",
+          },
+          metadata: {
+            command: "repo-list-sync-pairs",
+            timestamp: new Date().toISOString(),
+            durationMs: Date.now() - startTime,
+          },
+        });
+        return;
+      }
+
+      const syncConfig = await loadSyncPairConfig(configPath, logger);
+      const result = summarizeSyncPairs(syncConfig, configPath);
+
+      res
+        .status(200)
+        .json(buildResponse("repo-list-sync-pairs", result, startTime));
     },
 
     /**

@@ -227,6 +227,42 @@ export interface SyncPairItemResult {
   error?: string;
 }
 
+/** Token expiry status for a sync pair credential */
+export type TokenExpiryStatus = "valid" | "expiring-soon" | "expired" | "no-expiry-set";
+
+/** Summary of a single sync pair with masked credentials */
+export interface SyncPairSummary {
+  /** Sync pair name */
+  name: string;
+  /** Source platform */
+  platform: "github" | "azure-devops";
+  /** Source identifier (e.g., "owner/repo" or "org/project/repo") */
+  source: string;
+  /** Git ref (branch/tag/commit) if specified */
+  ref?: string;
+  /** Destination details */
+  destination: {
+    accountUrl: string;
+    container: string;
+    folder: string;
+  };
+  /** Token expiry status for source and destination credentials */
+  tokenStatus: {
+    sourceToken: TokenExpiryStatus;
+    destinationSasToken: TokenExpiryStatus;
+  };
+}
+
+/** Result of listing sync pairs */
+export interface SyncPairListResult {
+  /** Total number of configured sync pairs */
+  totalPairs: number;
+  /** Path to the sync pair configuration file */
+  configPath: string;
+  /** Array of sync pair summaries */
+  syncPairs: SyncPairSummary[];
+}
+
 /** Result of batch sync pair execution */
 export interface SyncPairBatchResult {
   /** Total number of pairs processed */

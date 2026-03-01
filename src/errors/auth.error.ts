@@ -67,6 +67,19 @@ export class AuthError extends AzureFsError {
   /**
    * Factory: invalid authentication method specified.
    */
+  /**
+   * Factory: global Azure Storage configuration is not set.
+   */
+  static missingStorageConfig(): AuthError {
+    return new AuthError(
+      "AUTH_MISSING_STORAGE_CONFIG",
+      "Global Azure Storage configuration is not set. " +
+        "Provide AZURE_STORAGE_ACCOUNT_URL, AZURE_STORAGE_CONTAINER_NAME, and AZURE_FS_AUTH_METHOD " +
+        "environment variables, or use sync pairs with per-pair storage credentials.",
+      400,
+    );
+  }
+
   static invalidAuthMethod(method: string): AuthError {
     return new AuthError(
       "AUTH_INVALID_AUTH_METHOD",

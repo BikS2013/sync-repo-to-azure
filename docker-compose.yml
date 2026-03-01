@@ -1,12 +1,12 @@
 services:
-  azure-fs-api:
+  sync-repo-to-azure:
     build:
       context: .
       dockerfile: Dockerfile
       platforms:
         - linux/amd64
         - linux/arm64
-    container_name: azure-fs-api
+    container_name: sync-repo-to-azure
     ports:
       - "4100:3000"
     env_file:
