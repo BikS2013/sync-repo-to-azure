@@ -838,6 +838,8 @@ The config file (`.repo-sync.json`) is the recommended way to store non-secret c
 | `AZURE_FS_SYNC_CONFIG_PATH` | Sync pair config file path | No (optional) |
 | `AZURE_VENV_SAS_TOKEN` | SAS token for Azure Blob Storage URL-based config fetching | No (optional) |
 | `AZURE_VENV_SAS_EXPIRY` | SAS token expiry for proactive warnings | No (optional) |
+| `AZURE_VENV_SAS_WRITE_TOKEN` | SAS token with write permissions for sync pair config write-back | No (optional) |
+| `AZURE_VENV_SAS_WRITE_TOKEN_EXPIRY` | Write SAS token expiry for proactive warnings | No (optional) |
 | `AZURE_VENV_POLL_INTERVAL` | Watch mode polling interval in ms (default: 30000) | No (optional) |
 | `PUBLIC_URL` | Swagger URL override | No (optional, auto-detection) |
 | `WEBSITE_HOSTNAME` | Swagger URL detection | No (auto-set by Azure App Service) |
@@ -956,6 +958,39 @@ Always set when using `AZURE_VENV_SAS_TOKEN` to get proactive expiry warnings. U
 
 ---
 
+### `AZURE_VENV_SAS_WRITE_TOKEN`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | SAS token with write+create permissions for writing sync pair configuration back to Azure Blob Storage. Used by the `manage-sync-pairs` Claude Code skill when modifying sync pair configs hosted in Azure Blob Storage. Falls back to `AZURE_VENV_SAS_TOKEN` if not set (requires that token to have write permissions). |
+| **Required** | No (optional; only needed if `AZURE_VENV_SAS_TOKEN` is read-only and you need write-back capability) |
+| **Type** | String (SAS token without leading `?`) |
+| **Environment variable** | `AZURE_VENV_SAS_WRITE_TOKEN` |
+
+**How to obtain:**
+Generate a SAS token from Azure Portal or Azure CLI with minimum permissions: Read (r), Write (w), Create (c) — `sp=rwc`. Scope it to the container and blob path where your sync-settings.json is stored.
+
+**Recommended management:**
+- Store in `.env` file or Azure App Service configuration
+- Do NOT include the leading `?` character
+- Rotate regularly; set `AZURE_VENV_SAS_WRITE_TOKEN_EXPIRY` for proactive warnings
+
+---
+
+### `AZURE_VENV_SAS_WRITE_TOKEN_EXPIRY`
+
+| Attribute | Value |
+|-----------|-------|
+| **Purpose** | The expiration date of `AZURE_VENV_SAS_WRITE_TOKEN`. Used for proactive expiry warnings. |
+| **Required** | No (optional, but recommended when using `AZURE_VENV_SAS_WRITE_TOKEN`) |
+| **Type** | String (ISO 8601 date, e.g., `2027-12-31T00:00:00Z`) |
+| **Environment variable** | `AZURE_VENV_SAS_WRITE_TOKEN_EXPIRY` |
+
+**Recommended management:**
+Always set when using `AZURE_VENV_SAS_WRITE_TOKEN` to get proactive expiry warnings. Update when rotating the SAS token.
+
+---
+
 ### `AZURE_VENV_POLL_INTERVAL`
 
 | Attribute | Value |
@@ -988,6 +1023,8 @@ Choose based on how frequently your Azure Blob Storage blobs change and your tol
 ## Sync Pair Configuration
 
 The sync pair configuration is a **separate file** (not part of `.repo-sync.json`) used by the `repo sync` CLI command and the `POST /api/v1/repo/sync` API endpoint. It defines one or more repository-to-blob-storage replication pairs, each with its own source credentials and Azure Storage destination.
+
+The `POST /api/v1/repo/sync` API endpoint accepts both **JSON** and **YAML** request bodies. Set the `Content-Type` header to `application/json` or `application/yaml` (also `application/x-yaml`, `text/yaml`) accordingly. YAML bodies are parsed by the `yaml-body-parser.middleware.ts` middleware using `js-yaml`.
 
 ### Why a Separate File
 

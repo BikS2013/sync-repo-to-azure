@@ -11,6 +11,7 @@ import swaggerUi from "swagger-ui-express";
 import { createErrorHandlerMiddleware } from "./middleware/error-handler.middleware";
 import { createRequestLoggerMiddleware } from "./middleware/request-logger.middleware";
 import { createTimeoutMiddleware } from "./middleware/timeout.middleware";
+import { createYamlBodyParserMiddleware } from "./middleware/yaml-body-parser.middleware";
 import { registerApiRoutes, ApiServices } from "./routes/index";
 import { createSwaggerSpec } from "./swagger/config";
 import { ConsoleCommands } from "../utils/console-commands.utils";
@@ -43,8 +44,9 @@ export function createApp(
     }),
   );
 
-  // 2. JSON body parser
+  // 2. Body parsers (JSON + YAML)
   app.use(express.json({ limit: "10mb" }));
+  app.use(createYamlBodyParserMiddleware("10mb"));
 
   // 3. Request logger (logs method, URL, status code, duration -- never bodies)
   app.use(createRequestLoggerMiddleware(logger));

@@ -408,9 +408,10 @@ src/api/
     hotkeys.controller.ts      - Remote console hotkey action handlers
     dev.controller.ts          - Development diagnostic endpoint handlers
   middleware/
-    error-handler.middleware.ts - Error -> HTTP status code mapping
-    request-logger.middleware.ts- Request/response logging (no body content)
-    timeout.middleware.ts       - Per-request timeout enforcement
+    error-handler.middleware.ts      - Error -> HTTP status code mapping
+    request-logger.middleware.ts     - Request/response logging (no body content)
+    timeout.middleware.ts            - Per-request timeout enforcement
+    yaml-body-parser.middleware.ts   - YAML request body parsing (application/yaml, application/x-yaml, text/yaml)
   swagger/
     config.ts                  - swagger-jsdoc OpenAPI 3.0 configuration
     schemas.ts                 - Reusable OpenAPI component schemas
@@ -423,6 +424,7 @@ HTTP Request
     │
     ├── 1. CORS middleware (validate origin)
     ├── 2. JSON body parser
+    ├── 2b. YAML body parser (application/yaml, application/x-yaml, text/yaml)
     ├── 3. Request logger (method, URL, timing)
     ├── 4. Timeout middleware (enforce api.requestTimeoutMs)
     ├── 5. Route matching -> Controller
@@ -1347,6 +1349,7 @@ src/
       error-handler.middleware.ts    - Global error handling middleware
       request-logger.middleware.ts   - HTTP request logging
       timeout.middleware.ts          - Request timeout enforcement
+      yaml-body-parser.middleware.ts - YAML request body parsing
   commands/
     index.ts                        - Command registration barrel
     config.commands.ts              - config init | show | validate

@@ -456,11 +456,59 @@ export function createRepoRoutes(services: ApiServices): Router {
    *       and Azure Storage destination (SAS token auth). Pairs are processed sequentially.
    *       This is a long-running operation; a 30-minute timeout is applied.
    *       DevOps sync pairs use PAT authentication only.
+   *
+   *       Accepts both JSON and YAML request bodies. Set the `Content-Type` header
+   *       to `application/json` or `application/yaml` accordingly.
    *     tags: [Repository Replication]
    *     requestBody:
    *       required: true
    *       content:
    *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [syncPairs]
+   *             properties:
+   *               syncPairs:
+   *                 type: array
+   *                 minItems: 1
+   *                 items:
+   *                   type: object
+   *                   required: [name, platform, source, destination]
+   *                   properties:
+   *                     name:
+   *                       type: string
+   *                       description: Unique name for this sync pair
+   *                       example: "my-github-repo"
+   *                     platform:
+   *                       type: string
+   *                       enum: [github, azure-devops]
+   *                       description: Source platform
+   *                     source:
+   *                       type: object
+   *                       description: Source repository configuration (platform-specific)
+   *                     destination:
+   *                       type: object
+   *                       required: [accountUrl, container, folder, sasToken]
+   *                       properties:
+   *                         accountUrl:
+   *                           type: string
+   *                           description: Azure Storage account URL
+   *                           example: "https://myaccount.blob.core.windows.net"
+   *                         container:
+   *                           type: string
+   *                           description: Container name
+   *                           example: "my-container"
+   *                         folder:
+   *                           type: string
+   *                           description: Destination folder path (required)
+   *                           example: "repos/my-repo"
+   *                         sasToken:
+   *                           type: string
+   *                           description: SAS token for Azure Storage auth
+   *                         sasTokenExpiry:
+   *                           type: string
+   *                           description: SAS token expiry (ISO 8601)
+   *         application/yaml:
    *           schema:
    *             type: object
    *             required: [syncPairs]

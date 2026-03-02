@@ -543,12 +543,16 @@ repo-sync repo sync --sync-config <path>
 
 **Endpoint**: `POST /api/v1/repo/sync`
 
-**Request body**: JSON object with the same structure as the sync pair config file (the `syncPairs` array with all pair definitions).
+**Request body**: JSON or YAML object with the same structure as the sync pair config file (the `syncPairs` array with all pair definitions). Set the `Content-Type` header to `application/json` or `application/yaml` accordingly.
+
+**Supported content types**:
+- `application/json` — JSON request body
+- `application/yaml` / `application/x-yaml` / `text/yaml` — YAML request body (parsed by the YAML body parser middleware)
 
 **Outputs**:
 - HTTP 200: All pairs succeeded
 - HTTP 207 (Multi-Status): Some pairs succeeded, some failed
-- HTTP 400: Invalid sync pair configuration
+- HTTP 400: Invalid sync pair configuration (including YAML parse errors)
 - HTTP 500: All pairs failed
 
 **Behavior**:
@@ -556,10 +560,12 @@ repo-sync repo sync --sync-config <path>
 - 30-minute timeout (overrides the default 5-minute repo route timeout)
 - Request body is validated using the same `validateSyncPairConfig()` function
 - Token expiry checked for all pairs before processing begins
+- YAML bodies are parsed via the `yaml-body-parser.middleware.ts` middleware using `js-yaml`
 
 **Edge cases**:
 - Request body missing `syncPairs`: HTTP 400 with `REPO_MISSING_PARAMS`
-- Request body too large: handled by Express JSON parser limit
+- Request body too large: handled by Express JSON/YAML parser limit (10mb)
+- Malformed YAML: HTTP 400 with `YAML_PARSE_ERROR` code and parse error details
 - Timeout exceeded: HTTP 408 (or connection drop depending on timing)
 
 ---
@@ -1243,7 +1249,48 @@ docker compose up
 
 ---
 
-## 10. Feature Summary by Priority
+## 10. Sync Pair Management Skill (Claude Code)
+
+### F10.1 Sync Pair Management Skill (P2)
+
+**Description**: A prompt-based Claude Code skill (`/manage-sync-pairs`) that provides CRUD operations on sync pair configurations without requiring new TypeScript code or API endpoints. Changes are written back to the config source (local file or Azure Blob Storage).
+
+**Operations**:
+- **List**: Display all sync pairs in a table with masked credentials and token expiry status
+- **Add**: Interactively collect sync pair fields (GitHub or Azure DevOps), validate, and save
+- **Update**: Select pair, modify fields, validate, and write back
+- **Delete**: Select pair, confirm by name, remove and save
+- **Run**: Execute sync via CLI, Docker API (localhost:4100), or Azure API (azurewebsites.net)
+
+**Config Source Detection**:
+- `AZURE_FS_SYNC_CONFIG_PATH` containing `.blob.core.windows.net` -> Azure Blob mode (write via REST API)
+- Local file path -> direct file write
+- Not set -> error with instructions
+
+**Format-Aware Serialization**:
+- Config file extension determines output format: `.json` -> JSON (2-space indent), `.yaml`/`.yml` -> YAML
+- Azure Blob uploads set `Content-Type` header matching the format (`application/json` or `application/yaml`)
+- API calls can send YAML bodies with `Content-Type: application/yaml`
+
+**Azure Blob Write-Back**:
+- Uses `AZURE_VENV_SAS_WRITE_TOKEN` (or falls back to `AZURE_VENV_SAS_TOKEN`)
+- PUT request with `x-ms-blob-type: BlockBlob` header and format-appropriate `Content-Type`
+- Watcher picks up changes on next poll cycle
+
+**Validation Rules**:
+- Name uniqueness across all pairs
+- Required fields per platform (see `sync-pair.loader.ts`)
+- ISO 8601 format for expiry dates
+- GitHub repo must match `owner/repo` format
+
+**Skill Files**:
+- Project: `.claude/skills/manage-sync-pairs/`
+- User: `~/ai-coding/claude-workdocs/.claude/skills/manage-sync-pairs/`
+- Entry point: `.claude/commands/manage-sync-pairs.md`
+
+---
+
+## 11. Feature Summary by Priority
 
 ### P0 -- Must-Have
 
@@ -1300,3 +1347,4 @@ docker compose up
 | ID | Feature |
 |----|---------|
 | F8.6 | Console hotkeys (interactive developer shortcuts) |
+| F10.1 | Sync pair management skill (Claude Code CRUD operations) |

@@ -205,8 +205,12 @@ curl -s -X POST $BASE/api/v1/repo/devops \
 
 This endpoint has a **30-minute timeout** (1,800,000 ms) instead of the 5-minute default on other repo routes, because multi-pair operations can be long-running.
 
+Accepts both **JSON** and **YAML** request bodies. Set `Content-Type` accordingly:
+- `application/json` for JSON bodies
+- `application/yaml` (or `application/x-yaml`, `text/yaml`) for YAML bodies
+
 ```bash
-# Sync two repositories (one GitHub, one DevOps)
+# Sync with JSON body
 curl -s -X POST $BASE/api/v1/repo/sync \
   -H "Content-Type: application/json" \
   -d '{
@@ -227,6 +231,11 @@ curl -s -X POST $BASE/api/v1/repo/sync \
       }
     ]
   }'
+
+# Sync with YAML config file
+curl -s -X POST $BASE/api/v1/repo/sync \
+  -H "Content-Type: application/yaml" \
+  --data-binary @sync-settings.yaml
 ```
 
 **Response codes:**
@@ -235,7 +244,7 @@ curl -s -X POST $BASE/api/v1/repo/sync \
 |--------|---------|
 | 200 | All sync pairs completed successfully |
 | 207 | Partial success (some pairs succeeded, some failed) |
-| 400 | Invalid sync pair configuration (validation error) |
+| 400 | Invalid sync pair configuration (validation error or YAML parse error) |
 | 500 | All sync pairs failed, or server error |
 
 #### List configured sync pairs

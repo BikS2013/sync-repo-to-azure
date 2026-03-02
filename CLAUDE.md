@@ -93,6 +93,8 @@ Read `deployment-instructions.md` when you need to build Docker images, deploy t
 | `DOCKER_HOST_URL` | Docker container public URL for Swagger URL detection (optional) |
 | `AZURE_FS_API_USE_HTTPS` | Force HTTPS for Kubernetes environments: true/false (optional) |
 | `AZURE_FS_SYNC_CONFIG_PATH` | Local path or HTTP(S) URL to sync pair configuration file (JSON/YAML). For Azure Blob URLs, `AZURE_VENV_SAS_TOKEN` is auto-appended. Overridden by CLI `--sync-config` flag. |
+| `AZURE_VENV_SAS_WRITE_TOKEN` | SAS token with write+create permissions for writing sync pair config back to Azure Blob Storage (no leading `?`). Used by manage-sync-pairs skill. Falls back to `AZURE_VENV_SAS_TOKEN` if not set. |
+| `AZURE_VENV_SAS_WRITE_TOKEN_EXPIRY` | Expiry date for `AZURE_VENV_SAS_WRITE_TOKEN` in ISO 8601 format (optional, warns 7 days before expiry) |
 
 ## Authentication Methods
 
@@ -123,6 +125,7 @@ src/
       error-handler.middleware.ts    - Global error handling middleware
       request-logger.middleware.ts   - HTTP request logging
       timeout.middleware.ts          - Request timeout enforcement
+      yaml-body-parser.middleware.ts - YAML request body parsing (application/yaml, application/x-yaml, text/yaml)
   commands/
     index.ts                        - Command registration barrel
     config.commands.ts              - config init | show | validate
@@ -159,3 +162,70 @@ src/
     token-expiry.utils.ts           - Token expiry checking utility
     azure-venv-holder.utils.ts      - In-memory holder for azure-venv SyncResult and watch lifecycle
 ```
+
+## Claude Code Skills
+
+### manage-sync-pairs
+
+<manage-sync-pairs>
+    <objective>
+        Manage sync pair configurations for the repo-sync tool via Claude Code slash command. Supports CRUD operations on sync pairs stored in local files or Azure Blob Storage, plus run sync operations via CLI, Docker API, or Azure API.
+    </objective>
+    <command>
+        /manage-sync-pairs [list | add | update | delete | run]
+    </command>
+    <info>
+        A prompt-based Claude Code skill that provides full CRUD management of sync pair configurations
+        without requiring new TypeScript code or API endpoints. Changes are written back to the config
+        source (local file or Azure Blob Storage). Supports both JSON and YAML config formats with
+        format-aware serialization based on file extension.
+
+        Subcommands:
+        - list    : Display all configured sync pairs in a table with masked tokens and expiry status
+        - add     : Interactively add a new GitHub or Azure DevOps sync pair with validation
+        - update  : Select an existing pair, modify fields, validate, and save
+        - delete  : Select a pair, confirm by name, remove and save
+        - run     : Execute sync via CLI, Docker API (localhost:4100), or Azure API
+
+        Config source is detected from AZURE_FS_SYNC_CONFIG_PATH:
+        - Azure Blob URL (.blob.core.windows.net) -> write-back via REST API with SAS token
+        - Local file path -> direct file write
+        - Not set -> error with instructions
+
+        Format detection from config file extension:
+        - .json -> JSON serialization (2-space indent)
+        - .yaml / .yml -> YAML serialization
+        - Content-Type header set accordingly for Azure blob uploads
+
+        For Azure Blob write-back, uses AZURE_VENV_SAS_WRITE_TOKEN (or AZURE_VENV_SAS_TOKEN as fallback).
+
+        Examples:
+        /manage-sync-pairs list           # Show all sync pairs
+        /manage-sync-pairs add            # Add a new sync pair interactively
+        /manage-sync-pairs update         # Update an existing pair
+        /manage-sync-pairs delete         # Delete a sync pair (with confirmation)
+        /manage-sync-pairs run            # Run sync operations
+        /manage-sync-pairs               # Show interactive menu
+
+        Skill files location:
+        - Project: .claude/skills/manage-sync-pairs/
+        - User:    ~/ai-coding/claude-workdocs/.claude/skills/manage-sync-pairs/
+
+        Project Structure:
+        .claude/
+          commands/
+            manage-sync-pairs.md                    - Slash command entry point
+          skills/
+            manage-sync-pairs/
+              SKILL.md                              - Main skill with routing and principles
+              workflows/
+                list-sync-pairs.md                  - List pairs in table format
+                add-sync-pair.md                    - Interactive add workflow
+                update-sync-pair.md                 - Update existing pair workflow
+                delete-sync-pair.md                 - Delete pair workflow
+                run-sync.md                         - Execute sync workflow
+              references/
+                sync-pair-schema.md                 - Type definitions and validation rules
+                azure-blob-write.md                 - Azure Blob Storage write-back reference
+    </info>
+</manage-sync-pairs>
