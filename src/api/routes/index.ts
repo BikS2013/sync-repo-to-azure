@@ -2,6 +2,7 @@ import { Express, Request, Response } from "express";
 import { ApiResolvedConfig } from "../../types/api-config.types";
 import { ConfigSourceTracker } from "../../types/config.types";
 import { RepoReplicationService } from "../../services/repo-replication.service";
+import { BlobSearchService } from "../../services/blob-search.service";
 import { Logger } from "../../utils/logger.utils";
 import { createHealthRoutes } from "./health.routes";
 import { createRepoRoutes } from "./repo.routes";
@@ -21,6 +22,8 @@ export interface ApiServices {
   consoleCommands?: ConsoleCommands;
   /** Repo replication service instance (optional, created when repo routes are needed). */
   repoReplicationService?: RepoReplicationService;
+  /** Blob search service instance (optional, created when Azure Storage is configured). */
+  blobSearchService?: BlobSearchService;
 }
 
 /**

@@ -217,6 +217,17 @@
         (account URL, container, folder, SAS token). This enables batch replication of
         multiple repositories to potentially different storage targets in a single command.
 
+        IMPORTANT - Credential source for sync pairs:
+          All authentication credentials for sync operations are retrieved exclusively
+          from the sync pair configuration file, NOT from environment variables:
+          - GitHub source token:       sync pair's source.token field
+          - Azure DevOps PAT:          sync pair's source.pat field
+          - Destination SAS token:     sync pair's destination.sasToken field
+          This is different from single-repo commands (clone-github, clone-devops) which
+          read credentials from environment variables (GITHUB_TOKEN, AZURE_DEVOPS_PAT).
+          Each sync pair is self-contained with its own credentials, allowing different
+          pairs to authenticate against different accounts/organizations.
+
         File format is detected by extension:
           .json   -> JSON format
           .yaml   -> YAML format
@@ -292,9 +303,11 @@
     </command>
     <info>
         Reads a sync pair configuration file (JSON or YAML) and displays a summary of all
-        configured sync pairs. Credentials (tokens, PATs, SAS tokens) are never shown in the
-        output. Instead, token expiry status is reported for each credential: "valid",
-        "expiring-soon" (within 7 days), "expired", or "no-expiry-set".
+        configured sync pairs. All credentials (GitHub tokens, DevOps PATs, destination SAS
+        tokens) are stored in the sync pair configuration file itself - they are NOT read
+        from environment variables. Credentials are never shown in the output. Instead,
+        token expiry status is reported for each credential: "valid", "expiring-soon"
+        (within 7 days), "expired", or "no-expiry-set".
 
         This command is useful for inspecting what sync pairs are configured without
         executing any replication operations.
@@ -330,6 +343,47 @@
           repo-sync repo list-sync-pairs --sync-config ./sync-settings.json --json
     </info>
 </repo-sync-list-sync-pairs>
+
+<repo-sync-search-blobs>
+    <objective>
+        Search for blobs in Azure Blob Storage by metadata tags (source_registry, source_path, sync_time).
+        Uses the Azure "Find Blobs by Tags" API which queries the blob index.
+    </objective>
+    <command>
+        repo-sync repo search-blobs [options] [--json] [--verbose]
+    </command>
+    <info>
+        Searches across the configured Azure Storage account for blobs matching
+        the specified tag filters. At least one filter option must be provided.
+        Requires Azure Storage authentication to be configured.
+
+        Options:
+          --source-registry <registry>  Filter by source_registry tag (exact match)
+          --source-path <path>          Filter by source_path tag (exact match)
+          --sync-time-from <date>       Filter by sync_time >= ISO 8601 date
+          --sync-time-to <date>         Filter by sync_time <= ISO 8601 date
+          --container <name>            Restrict search to a specific container
+          --max-results <count>         Maximum results (1-5000, default 100)
+
+        Prerequisites:
+          - Azure Storage account URL and auth method must be configured
+          - Storage account must have Blob Index Tags enabled
+          - SAS tokens must include the 't' (tag) permission
+
+        Examples:
+          # Search by source registry
+          repo-sync repo search-blobs --source-registry github --json
+
+          # Search by source path
+          repo-sync repo search-blobs --source-path "microsoft/typescript" --json
+
+          # Search by time range
+          repo-sync repo search-blobs --sync-time-from "2026-01-01T00:00:00Z" --sync-time-to "2026-03-01T00:00:00Z" --json
+
+          # Combined search with container filter
+          repo-sync repo search-blobs --source-registry github --container my-container --max-results 50 --json
+    </info>
+</repo-sync-search-blobs>
 
 ## Global CLI Options
 

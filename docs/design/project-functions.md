@@ -1290,7 +1290,110 @@ docker compose up
 
 ---
 
-## 11. Feature Summary by Priority
+## 11. Blob Metadata, Index Tags, and Search
+
+### F11.1 Blob Metadata Setting (P0)
+
+**Description**: Every file uploaded to Azure Blob Storage during repository replication must have blob metadata set with source tracking information.
+
+**Metadata fields**:
+- `source_registry`: Source repository identifier (`owner/repo` for GitHub, `org/project/repo` for Azure DevOps)
+- `source_path`: Relative file path within the source repository (e.g., `src/index.ts`)
+- `sync_time`: ISO 8601 timestamp of the sync operation (consistent per batch)
+
+**Behavior**:
+- Metadata is included in the same HTTP PUT request as the blob content (no additional API call)
+- All files in a single replication batch share the same `sync_time` value
+- Metadata keys use underscores (Azure metadata keys cannot contain hyphens)
+- Applied to both small-file (`upload()`) and large-file (`uploadStream()`) paths
+
+**Edge cases**:
+- File path with unicode/special characters -- passed as-is (Azure metadata values are UTF-8)
+- Empty file (0 bytes) -- metadata still set
+- Upload failure -- metadata is not set (blob does not exist)
+
+---
+
+### F11.2 Blob Index Tag Setting (P0)
+
+**Description**: Every file uploaded to Azure Blob Storage during repository replication must have blob index tags set with source tracking information, enabling native tag-based queries.
+
+**Tag fields**: Same as metadata (`source_registry`, `source_path`, `sync_time`)
+
+**Behavior**:
+- Tags are included in the upload options alongside metadata
+- `source_path` tag values are truncated to 256 characters (Azure tag value limit); full path is always preserved in metadata
+- Maximum 3 tags per blob (well within the 10-tag Azure limit)
+- Tags enable `findBlobsByTags()` queries across the storage account
+
+**Requirements**:
+- Storage account must be general-purpose v2 with Blob Index Tags enabled
+- SAS tokens must include the `t` (tag) permission
+
+**Edge cases**:
+- `source_path` longer than 256 chars -- truncated in tag, full value in metadata
+- Storage account without tag support -- upload fails; graceful fallback with metadata-only retry and warning log
+- SAS token without tag permission -- same graceful fallback behavior
+
+---
+
+### F11.3 Blob Search by Tags - API (P1)
+
+**Description**: REST API endpoint to search blobs by index tags across the storage account.
+
+**Endpoint**: `GET /api/v1/repo/search`
+
+**Query parameters**:
+- `sourceRegistry` (string, optional): Exact match on `source_registry` tag
+- `sourcePath` (string, optional): Exact match on `source_path` tag
+- `syncTimeFrom` (string, optional): `sync_time >= value` (ISO 8601)
+- `syncTimeTo` (string, optional): `sync_time <= value` (ISO 8601)
+- `containerName` (string, optional): Restrict search to a specific container
+- `maxResults` (integer, optional, default 100, range 1-5000): Maximum results to return
+
+**Validation**: At least one filter parameter must be provided (returns 400 otherwise)
+
+**Response**: Standard JSON envelope with `data.items[]` (each with `blobName`, `containerName`, `tags`), `data.totalFound`, `data.truncated`, `data.filterQuery`
+
+**Edge cases**:
+- No matching blobs -- returns empty array with count 0
+- Recently uploaded blobs -- may not appear due to eventual consistency (documented in response)
+- Storage account without tag support -- returns 500 with descriptive error
+
+---
+
+### F11.4 Blob Search by Tags - CLI (P1)
+
+**Description**: CLI command to search blobs by index tags.
+
+**Command**: `repo-sync repo search-blobs`
+
+**Options**:
+- `--source-registry <registry>`: Filter by source registry (exact match)
+- `--source-path <path>`: Filter by source file path (exact match)
+- `--sync-time-from <datetime>`: Filter by sync time (>= ISO 8601)
+- `--sync-time-to <datetime>`: Filter by sync time (<= ISO 8601)
+- `--container <name>`: Restrict search to a specific container
+- `--max-results <count>`: Maximum results (1-5000, default 100)
+
+**Validation**: At least one filter option must be provided (exits with code 3 otherwise)
+
+**Output**: JSON (with `--json`) or human-readable table format
+
+---
+
+### F11.5 Batch Sync Time Consistency (P2)
+
+**Description**: All files within a single replication operation share the same `sync_time` value, captured once at the start of the streaming pipeline.
+
+**Behavior**:
+- `sync_time` is captured as `new Date().toISOString()` once per `streamTarToBlob()` or `streamZipToBlob()` invocation
+- Every file in that batch gets the identical timestamp
+- Enables precise "find all files from sync run X" queries
+
+---
+
+## 12. Feature Summary by Priority
 
 ### P0 -- Must-Have
 
@@ -1315,6 +1418,8 @@ docker compose up
 | F7.8 | CORS configuration |
 | F8.1 | NODE_ENV support (environment mode control) |
 | F8.4 | PortChecker utility (proactive port conflict resolution) |
+| F11.1 | Blob metadata setting (source tracking on every uploaded blob) |
+| F11.2 | Blob index tag setting (queryable source tracking on every uploaded blob) |
 
 ### P1 -- Important
 
@@ -1341,6 +1446,8 @@ docker compose up
 | F8.5 | Development routes |
 | F8.7 | Hotkey API endpoints |
 | F9.1 | Docker containerization |
+| F11.3 | Blob search by tags - API endpoint |
+| F11.4 | Blob search by tags - CLI command |
 
 ### P2 -- Nice-to-Have
 
@@ -1348,3 +1455,4 @@ docker compose up
 |----|---------|
 | F8.6 | Console hotkeys (interactive developer shortcuts) |
 | F10.1 | Sync pair management skill (Claude Code CRUD operations) |
+| F11.5 | Batch sync time consistency |

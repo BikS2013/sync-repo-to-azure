@@ -96,6 +96,12 @@ Read `deployment-instructions.md` when you need to build Docker images, deploy t
 | `AZURE_VENV_SAS_WRITE_TOKEN` | SAS token with write+create permissions for writing sync pair config back to Azure Blob Storage (no leading `?`). Used by manage-sync-pairs skill. Falls back to `AZURE_VENV_SAS_TOKEN` if not set. |
 | `AZURE_VENV_SAS_WRITE_TOKEN_EXPIRY` | Expiry date for `AZURE_VENV_SAS_WRITE_TOKEN` in ISO 8601 format (optional, warns 7 days before expiry) |
 
+## Credential Sources: Single-Repo vs Sync Pairs
+
+**Single-repo commands** (`repo clone-github`, `repo clone-devops`): Credentials are read from environment variables (`GITHUB_TOKEN`, `AZURE_DEVOPS_PAT`, `AZURE_STORAGE_SAS_TOKEN`).
+
+**Sync pair operations** (`repo sync`, `repo list-sync-pairs`): All credentials are retrieved exclusively from the sync pair configuration file (e.g., `sync-settings.json`), NOT from environment variables. Each sync pair carries its own `source.token` (GitHub), `source.pat` (DevOps), and `destination.sasToken`. This allows different pairs to authenticate against different accounts/organizations.
+
 ## Authentication Methods
 
 1. **azure-ad** (recommended): Uses DefaultAzureCredential. Requires `az login` or equivalent.
@@ -114,11 +120,11 @@ src/
     routes/
       index.ts                      - Route registration barrel
       health.routes.ts              - GET /api/health, GET /api/health/ready
-      repo.routes.ts                - /api/v1/repo/github, /api/v1/repo/devops, /api/v1/repo/sync endpoints
+      repo.routes.ts                - /api/v1/repo/github, /api/v1/repo/devops, /api/v1/repo/sync, /api/v1/repo/search endpoints
       dev.routes.ts                 - /api/dev/env development-only routes
       hotkeys.routes.ts             - /api/dev/hotkeys remote console hotkey routes
     controllers/
-      repo.controller.ts            - Repo replication request handlers
+      repo.controller.ts            - Repo replication and blob search request handlers
       dev.controller.ts             - Development diagnostic endpoint handlers
       hotkeys.controller.ts         - Remote console hotkey action handlers
     middleware/
@@ -129,13 +135,14 @@ src/
   commands/
     index.ts                        - Command registration barrel
     config.commands.ts              - config init | show | validate
-    repo.commands.ts                - repo clone-github | clone-devops | sync
+    repo.commands.ts                - repo clone-github | clone-devops | sync | search-blobs
   services/
     auth.service.ts                 - Authentication factory (3 methods)
     path.service.ts                 - Path normalization
     github-client.service.ts        - GitHub API client (archive stream download)
     devops-client.service.ts        - Azure DevOps API client (archive stream download)
     repo-replication.service.ts     - Streaming archive-to-blob orchestration (single repo + sync pairs)
+    blob-search.service.ts          - Search blobs by metadata tags via Azure findBlobsByTags API
   config/
     config.loader.ts                - Layered config loading (CLI > env > file)
     config.schema.ts                - Config validation (no fallbacks)
@@ -152,6 +159,7 @@ src/
     config.error.ts                 - ConfigError
     auth.error.ts                   - AuthError
     repo-replication.error.ts       - RepoReplicationError
+    blob-search.error.ts            - BlobSearchError
   utils/
     output.utils.ts                 - JSON/human-readable output formatting
     exit-codes.utils.ts             - Process exit code constants and resolver

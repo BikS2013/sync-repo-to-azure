@@ -15,6 +15,8 @@
 - Replicate GitHub and Azure DevOps repositories to Azure Blob Storage via streaming
 - Support sync pair configuration for batch replication of multiple repositories
 - Support multiple authentication methods for both source platforms and Azure Storage
+- Set source-tracking metadata and index tags on each uploaded blob (source registry, source path, sync time)
+- Support blob search by index tags (source registry, source path, sync time) via API and CLI
 - Output structured JSON for reliable agent parsing
 - Enforce strict configuration with no silent fallbacks
 - Be modular, testable, and extensible
@@ -22,7 +24,7 @@
 ### 1.2 Non-Goals
 
 - Generic file upload/download to Azure Blob Storage
-- Folder operations, metadata management, or tag querying on blobs
+- Generic folder operations on blobs (list, delete, move folders)
 - File editing or patching operations
 - Git history replication (only working tree at a specified ref)
 - Submodule resolution
@@ -40,7 +42,7 @@
 │  repo-sync <command> [args] [--json] [--verbose] [--config path] │
 │                                                                  │
 │  Commands: config | repo clone-github | repo clone-devops |      │
-│            repo sync | repo list-sync-pairs                      │
+│            repo sync | repo list-sync-pairs | repo search-blobs  │
 └────────────────────────────┬─────────────────────────────────────┘
                              │
                              │ resolves config, creates service
@@ -122,6 +124,9 @@ src/index.ts
         │     ├── tar-stream (streaming tar extraction)
         │     ├── zlib (Node.js built-in, gunzip)
         │     └── unzipper (streaming zip extraction)
+        ├── src/services/blob-search.service.ts
+        │     ├── @azure/storage-blob (findBlobsByTags)
+        │     └── src/errors/blob-search.error.ts
         └── src/utils/output.utils.ts
               └── src/types/command-result.types.ts
 ```
@@ -138,6 +143,7 @@ src/index.ts
 | `github-client.service` | GitHub API client (archive stream download) | `GitHubClientService` class |
 | `devops-client.service` | Azure DevOps API client (archive stream download) | `DevOpsClientService` class |
 | `repo-replication.service` | Streaming archive-to-blob orchestration (single repo + sync pairs) | `RepoReplicationService` class |
+| `blob-search.service` | Search blobs by metadata tags (source_registry, source_path, sync_time) | `BlobSearchService` class |
 | `output.utils` | Format CommandResult as JSON or human-readable text | `formatOutput()` |
 | `retry.utils` | Configurable retry wrapper (none/exponential/fixed) | `withRetry()` |
 | `logger.utils` | Request logging (parameters only, no file content) | `Logger` class |
@@ -318,7 +324,7 @@ User/Agent invokes: repo-sync repo clone-github --repo owner/repo --dest repos/m
 
 ## 7. Security Considerations
 
-1. **No secrets in config files**: Connection strings, SAS tokens, GitHub tokens, and Azure DevOps PATs must come from environment variables, never from `.repo-sync.json`
+1. **No secrets in `.repo-sync.json`**: Connection strings, SAS tokens, GitHub tokens, and Azure DevOps PATs for single-repo commands must come from environment variables, never from `.repo-sync.json`. **Exception**: Sync pair configuration files (e.g., `sync-settings.json`) intentionally embed per-pair credentials (GitHub tokens, DevOps PATs, destination SAS tokens) because each pair is self-contained and may target different accounts/organizations
 2. **Azure AD as primary auth**: DefaultAzureCredential provides the strongest security model
 3. **Request logging omits content**: Logger records request parameters but never file content or credentials
 4. **Config file in .gitignore**: The `.repo-sync.json` file should be gitignored; only `.repo-sync.json.example` is committed
@@ -899,7 +905,7 @@ export interface RepoSyncConfigFile {
 }
 ```
 
-Note: `github.token` and `devops.pat` are **never** stored in the config file per the project's security policy. They come exclusively from environment variables `GITHUB_TOKEN` and `AZURE_DEVOPS_PAT`.
+Note: `github.token` and `devops.pat` are **never** stored in the `.repo-sync.json` config file. For single-repo commands (`clone-github`, `clone-devops`), they come exclusively from environment variables `GITHUB_TOKEN` and `AZURE_DEVOPS_PAT`. However, for sync pair operations (`repo sync`), all credentials (GitHub tokens, DevOps PATs, destination SAS tokens) are stored in the sync pair configuration file (e.g., `sync-settings.json`) per pair.
 
 The `ResolvedConfig` interface includes optional repo config sections:
 
@@ -1106,7 +1112,7 @@ The `.repo-sync.json` config file can optionally include `github` and `devops` s
 }
 ```
 
-**Security rule**: `github.token` and `devops.pat` are never read from config files. Tokens/PATs must come from environment variables exclusively.
+**Security rule**: For single-repo commands, `github.token` and `devops.pat` are never read from `.repo-sync.json`. Tokens/PATs must come from environment variables exclusively. For sync pair operations, all credentials (GitHub tokens, DevOps PATs, destination SAS tokens) are embedded in the sync pair configuration file per pair.
 
 #### 11.7.4 Token Expiry Warning Logic
 
@@ -1257,12 +1263,15 @@ components:
 
 The sync pair feature extends the repository replication module to support configuration-driven batch replication. A sync pair configuration file (JSON or YAML) defines multiple repository-to-Azure-Storage mapping pairs. Each pair is self-contained with its own source credentials and storage destination.
 
+**Credential source:** All authentication credentials for sync pair operations are retrieved exclusively from the sync pair configuration file, NOT from environment variables. Each sync pair carries its own: GitHub `source.token`, DevOps `source.pat`, and `destination.sasToken`. This is fundamentally different from single-repo commands (`clone-github`, `clone-devops`) which read credentials from environment variables (`GITHUB_TOKEN`, `AZURE_DEVOPS_PAT`, `AZURE_STORAGE_SAS_TOKEN`).
+
 **Key design decisions:**
 - `folder` is REQUIRED in each destination (no default/fallback -- consistent with project no-fallback rule)
 - Pairs are processed sequentially (predictable resource usage and error reporting)
 - Failure mode is fail-open (remaining pairs continue if one fails)
 - DevOps sync pairs use PAT authentication only (no azure-ad, which is a machine-level credential)
 - Sync pair config is a separate file, not part of `.repo-sync.json`
+- All per-pair credentials (tokens, PATs, SAS tokens) are embedded in the sync pair config file
 
 ### 12.2 Architecture
 
@@ -1403,3 +1412,88 @@ src/
 11. **PAT-only for DevOps sync pairs**: azure-ad is not supported in sync pairs because it uses machine-level `DefaultAzureCredential`.
 12. **SAS token auth only for sync pair destinations**: Connection string and Azure AD are not supported for sync pair destinations.
 13. **30-minute API timeout for sync**: Long-running sync operations may still exceed this for very large batches.
+14. **Blob index tag eventual consistency**: Newly uploaded blobs may not appear in `findBlobsByTags()` search results for several minutes due to Azure's eventual consistency model.
+15. **Tag permission requirement**: SAS tokens must include the 't' (tag) permission for blob index tags to be set. If tag permissions are missing, small file uploads gracefully degrade (metadata only, no tags) while large file uploads may fail.
+16. **Container-scoped SAS tokens cannot search**: `findBlobsByTags()` requires storage-account-level authentication. Container-scoped SAS tokens (used by sync pairs) do not support the search endpoint.
+
+---
+
+## 15. Blob Metadata and Index Tags
+
+### 15.1 Overview
+
+Every file uploaded to Azure Blob Storage during repository replication is tagged with source-tracking metadata and blob index tags. This enables per-blob inspection (via metadata) and cross-container search (via index tags).
+
+### 15.2 Metadata and Tags
+
+| Field | Metadata Key | Tag Key | Value Format | Tag Value Limit |
+|-------|-------------|---------|-------------|-----------------|
+| Source Registry | `source_registry` | `source_registry` | `owner/repo` (GitHub) or `org/project/repo` (DevOps) | 256 chars |
+| Source Path | `source_path` | `source_path` | Relative file path inside the repository | 256 chars (truncated) |
+| Sync Time | `sync_time` | `sync_time` | ISO 8601 timestamp (e.g., `2026-03-02T10:30:00.000Z`) | 256 chars |
+
+- **Metadata** is stored per-blob and included in the upload HTTP request (no extra API call). Not natively queryable.
+- **Index tags** are stored per-blob and support `findBlobsByTags()` SQL-like queries across the entire storage account.
+- `source_path` tag values exceeding 256 characters are truncated; the full path is always preserved in metadata.
+- `sync_time` is captured once per replication batch (not per-file) for consistency.
+
+### 15.3 Data Flow
+
+```
+CLI / API Request
+       |
+       v
+RepoReplicationService
+  |-- replicateGitHub() / replicateDevOps()
+  |     |
+  |     v
+  |   streamTarToBlob() / streamZipToBlob()
+  |     |-- syncTime = new Date().toISOString()    <-- captured once per batch
+  |     |
+  |     |   (per entry/file in archive)
+  |     |-- Construct BlobUploadMetadata {
+  |     |     source_registry: repoIdentifier,
+  |     |     source_path: strippedPath / entryPath,
+  |     |     sync_time: syncTime
+  |     |   }
+  |     |
+  |     v
+  |   uploadEntryToBlob(client, blobPath, stream, size, blobMetadata)
+  |     |-- Build metadata: Record<string, string>
+  |     |-- Build tags: Record<string, string> (source_path truncated to 256)
+  |     |-- upload(buffer, length, { metadata, tags })
+  |     |     or uploadStream(stream, undef, undef, { metadata, tags })
+  |     |
+  |     |-- ON TAG PERMISSION ERROR (small files only):
+  |     |     retry with { metadata } only, log warning
+  |     |
+  |     v
+  BlockBlobClient -> Azure Blob Storage
+```
+
+### 15.4 Blob Search Service
+
+A new `BlobSearchService` (`src/services/blob-search.service.ts`) wraps `BlobServiceClient.findBlobsByTags()` to provide structured search over blob index tags.
+
+**Search Parameters**:
+- `sourceRegistry` (exact match on `source_registry` tag)
+- `sourcePath` (exact match on `source_path` tag)
+- `syncTimeFrom` (>= on `sync_time` tag, ISO 8601)
+- `syncTimeTo` (<= on `sync_time` tag, ISO 8601)
+- `maxResults` (1-5000, default 100)
+
+**Search is exposed via**:
+- **API**: `GET /api/v1/repo/search` with query parameters
+- **CLI**: `repo search-blobs` with `--source-registry`, `--source-path`, `--sync-time-from`, `--sync-time-to`, `--max-results` options
+
+### 15.5 Error Handling
+
+A new `BlobSearchError` class (`src/errors/blob-search.error.ts`) extends `AzureFsError` with codes:
+- `BLOB_SEARCH_MISSING_PARAMS` (400) -- no filters provided
+- `BLOB_SEARCH_INVALID_PARAM` (400) -- invalid parameter value
+- `BLOB_SEARCH_FAILED` (500) -- Azure SDK search error
+- `BLOB_SEARCH_AUTH_MISSING` (401) -- storage auth not configured
+
+### 15.6 No Configuration Required
+
+Blob metadata and index tags are set automatically during every replication operation. No new environment variables or configuration settings are needed. The feature is transparent to existing workflows.

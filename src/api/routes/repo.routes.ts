@@ -16,6 +16,7 @@ export function createRepoRoutes(services: ApiServices): Router {
   const controller = createRepoController(
     services.repoReplicationService!,
     services.logger,
+    services.blobSearchService,
   );
 
   // Override timeout for repo routes (5 minutes instead of default)
@@ -729,6 +730,188 @@ export function createRepoRoutes(services: ApiServices): Router {
    *         description: Internal server error (file read or parse failure)
    */
   router.get("/sync-pairs", controller.listSyncPairs);
+
+  /**
+   * @openapi
+   * /api/v1/repo/search:
+   *   get:
+   *     operationId: searchBlobs
+   *     summary: Search blobs by metadata tags
+   *     description: |
+   *       Searches for blobs in Azure Blob Storage using blob index tags.
+   *       At least one search parameter (sourceRegistry, sourcePath, syncTimeFrom,
+   *       or syncTimeTo) must be provided. Results are limited by maxResults (default 100).
+   *       Requires the storage account to have blob index tags enabled.
+   *     tags: [Blob Search]
+   *     parameters:
+   *       - in: query
+   *         name: sourceRegistry
+   *         schema:
+   *           type: string
+   *         description: Filter by source_registry tag (exact match, e.g., "owner/repo" or "org/project/repo")
+   *         example: "microsoft/typescript"
+   *       - in: query
+   *         name: sourcePath
+   *         schema:
+   *           type: string
+   *         description: Filter by source_path tag (exact match, file path within the repository)
+   *         example: "src/index.ts"
+   *       - in: query
+   *         name: syncTimeFrom
+   *         schema:
+   *           type: string
+   *           format: date-time
+   *         description: Filter by sync_time tag >= this ISO 8601 date
+   *         example: "2026-01-01T00:00:00Z"
+   *       - in: query
+   *         name: syncTimeTo
+   *         schema:
+   *           type: string
+   *           format: date-time
+   *         description: Filter by sync_time tag <= this ISO 8601 date
+   *         example: "2026-12-31T23:59:59Z"
+   *       - in: query
+   *         name: containerName
+   *         schema:
+   *           type: string
+   *         description: Restrict search to a specific container
+   *         example: "my-container"
+   *       - in: query
+   *         name: maxResults
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 5000
+   *           default: 100
+   *         description: Maximum number of results to return (1-5000)
+   *     responses:
+   *       200:
+   *         description: Search completed successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     items:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           blobName:
+   *                             type: string
+   *                             example: "repos/typescript/src/index.ts"
+   *                           containerName:
+   *                             type: string
+   *                             example: "my-container"
+   *                           tags:
+   *                             type: object
+   *                             additionalProperties:
+   *                               type: string
+   *                             example:
+   *                               source_registry: "microsoft/typescript"
+   *                               source_path: "src/index.ts"
+   *                               sync_time: "2026-03-01T12:00:00Z"
+   *                     totalFound:
+   *                       type: integer
+   *                       example: 42
+   *                     truncated:
+   *                       type: boolean
+   *                       example: false
+   *                     filterQuery:
+   *                       type: string
+   *                       example: "\"source_registry\" = 'github'"
+   *                 metadata:
+   *                   type: object
+   *                   properties:
+   *                     command:
+   *                       type: string
+   *                       example: "blob-search"
+   *                     timestamp:
+   *                       type: string
+   *                       format: date-time
+   *                     durationMs:
+   *                       type: integer
+   *       400:
+   *         description: Missing or invalid search parameters
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 error:
+   *                   type: object
+   *                   properties:
+   *                     code:
+   *                       type: string
+   *                       example: "BLOB_SEARCH_MISSING_PARAMS"
+   *                     message:
+   *                       type: string
+   *                       example: "Missing required search parameters: At least one of sourceRegistry, sourcePath, syncTimeFrom, or syncTimeTo is required"
+   *                 metadata:
+   *                   type: object
+   *                   properties:
+   *                     timestamp:
+   *                       type: string
+   *                       format: date-time
+   *       401:
+   *         description: Azure Storage authentication not configured
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 error:
+   *                   type: object
+   *                   properties:
+   *                     code:
+   *                       type: string
+   *                       example: "BLOB_SEARCH_AUTH_MISSING"
+   *                     message:
+   *                       type: string
+   *                 metadata:
+   *                   type: object
+   *                   properties:
+   *                     timestamp:
+   *                       type: string
+   *                       format: date-time
+   *       500:
+   *         description: Blob search failed (Azure Storage error)
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 error:
+   *                   type: object
+   *                   properties:
+   *                     code:
+   *                       type: string
+   *                       example: "BLOB_SEARCH_FAILED"
+   *                     message:
+   *                       type: string
+   *                 metadata:
+   *                   type: object
+   *                   properties:
+   *                     timestamp:
+   *                       type: string
+   *                       format: date-time
+   */
+  router.get("/search", controller.searchBlobs);
 
   return router;
 }

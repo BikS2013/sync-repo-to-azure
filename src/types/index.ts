@@ -27,6 +27,7 @@ export {
   NetworkErrorCode,
   GeneralErrorCode,
   RepoErrorCode,
+  BlobSearchErrorCode,
 } from "./errors.types";
 
 export {
@@ -36,6 +37,7 @@ export {
   GitHubRepoParams,
   DevOpsRepoParams,
   RepoFileUploadResult,
+  BlobUploadMetadata,
   RepoReplicationResult,
   GitHubRepoInfo,
   GitHubRepoConfig,

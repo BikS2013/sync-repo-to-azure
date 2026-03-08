@@ -62,6 +62,16 @@ export interface RepoFileUploadResult {
   error?: string;
 }
 
+/** Metadata and index tags to attach to each uploaded blob */
+export interface BlobUploadMetadata {
+  /** Source registry identifier (e.g., github-account/repo or org/project/repo) */
+  source_registry: string;
+  /** File path within the repository */
+  source_path: string;
+  /** Sync timestamp in ISO 8601 format */
+  sync_time: string;
+}
+
 /** Aggregate result of a repository replication operation */
 export interface RepoReplicationResult {
   /** Source platform */

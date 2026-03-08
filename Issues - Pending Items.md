@@ -2,6 +2,45 @@
 
 ## Pending
 
+### P3 - Plan 011 Blob Metadata: Design Deviations (Non-Breaking)
+
+**Detected**: 2026-03-02 (code review of Plan 011 blob metadata and tags implementation)
+**Location**: Multiple files
+
+**Description**: The implementation of Plan 011 has several acceptable deviations from the technical design document (`plan-011-blob-metadata-and-tags-technical-design.md`):
+
+1. **`BlobSearchResult` field naming**: Design specifies `count`, `blobs`, `durationMs`. Implementation uses `items`, `totalFound`, and omits `durationMs` (captured instead in API `metadata.durationMs` via `buildResponse()`). This avoids duplication and is consistent with the existing response envelope pattern.
+
+2. **`BlobSearchParams` extra field**: Implementation adds a `containerName` field not in the design. This is a useful enhancement for scoping searches to a specific container using the Azure `@container` filter.
+
+3. **`BlobSearchError.missingParams()` signature**: Design has no parameter; implementation takes `detail: string`. More descriptive error messages.
+
+4. **`uploadEntryToBlob` large file tag fallback**: Design specifies an explicit inner try/catch with re-throw for stream uploads. Implementation relies on the outer catch, achieving the same result (failed file recorded in stats).
+
+5. **`isTagPermissionError` checks**: Implementation uses more precise Azure error codes (`BlobTagsNotSupportedForSasToken`) instead of generic pattern matching.
+
+6. **API command label**: Design uses `"repo-search-blobs"` in `buildResponse()`. Implementation uses `"blob-search"`. Cosmetic only.
+
+None of these are bugs -- they are reasonable implementation choices that diverge from the design for clarity or improved behavior.
+
+---
+
+### P3 - Plan 011 Blob Metadata: Missing Documentation Updates
+
+**Detected**: 2026-03-02 (code review of Plan 011 blob metadata and tags implementation)
+**Location**: `CLAUDE.md`, `cli-instructions.md`, `api-instructions.md`, `docs/design/configuration-guide.md`, `docs/design/project-design.md`, `docs/design/project-functions.md`
+
+**Description**: Per the project's highest priority instructions in CLAUDE.md, every new operation must update the design docs, API docs, CLI docs, Swagger content, and configuration guide. The following updates are pending:
+
+1. **CLAUDE.md**: Needs `blob-search.service.ts`, `blob-search.error.ts` in project structure; needs `search-blobs` CLI command and `GET /api/v1/repo/search` API endpoint documented.
+2. **cli-instructions.md**: Needs `repo search-blobs` command documentation with syntax, options, and examples.
+3. **api-instructions.md**: Needs `GET /api/v1/repo/search` endpoint reference, curl examples, and response documentation.
+4. **project-design.md**: Needs blob metadata and tags feature documented.
+5. **project-functions.md**: Needs blob search functionality registered.
+6. **configuration-guide.md**: No new config variables were added (metadata is automatic), but the feature behavior should be noted.
+
+---
+
 ### P3 - Sync Pair Feature: Design Deviation -- SyncPairItemResult Missing errorCode Field
 
 **Detected**: 2026-02-28 (code review of Plan 008 sync pair implementation)
@@ -14,6 +53,16 @@
 ---
 
 ## Completed
+
+### P2 - Plan 011 Blob Search: Swagger Examples Had Swapped sourceRegistry/sourcePath Values (FIXED)
+
+**Detected**: 2026-03-02 (code review of Plan 011 blob metadata and tags implementation)
+**Fixed**: 2026-03-02
+**Location**: `src/api/routes/repo.routes.ts` -- Swagger annotations for `GET /api/v1/repo/search`
+
+**Resolution**: The Swagger `@openapi` annotations had swapped example values for the `sourceRegistry` and `sourcePath` query parameters. `sourceRegistry` showed `"github"` (should be an owner/repo like `"microsoft/typescript"`), while `sourcePath` showed `"microsoft/typescript"` (should be a file path like `"src/index.ts"`). Both the parameter examples and the response body tag examples were corrected to use semantically accurate values.
+
+---
 
 ### Plan 009: Strip Generic Storage Features, Rename Project to repo-sync (COMPLETED)
 

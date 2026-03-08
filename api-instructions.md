@@ -205,6 +205,8 @@ curl -s -X POST $BASE/api/v1/repo/devops \
 
 This endpoint has a **30-minute timeout** (1,800,000 ms) instead of the 5-minute default on other repo routes, because multi-pair operations can be long-running.
 
+**IMPORTANT - Credential source:** All authentication credentials for sync operations are retrieved exclusively from the sync pair configuration (either the request body or the server-side config file), NOT from server environment variables. Each sync pair carries its own `source.token` (GitHub) or `source.pat` (DevOps) and `destination.sasToken`. This is different from single-repo endpoints (`/github`, `/devops`) which use server-side environment variables (`GITHUB_TOKEN`, `AZURE_DEVOPS_PAT`).
+
 Accepts both **JSON** and **YAML** request bodies. Set `Content-Type` accordingly:
 - `application/json` for JSON bodies
 - `application/yaml` (or `application/x-yaml`, `text/yaml`) for YAML bodies
@@ -249,6 +251,8 @@ curl -s -X POST $BASE/api/v1/repo/sync \
 
 #### List configured sync pairs
 
+All credentials (GitHub tokens, DevOps PATs, destination SAS tokens) are stored in the sync pair configuration file itself - they are NOT read from server environment variables.
+
 ```bash
 # List all configured sync pairs (requires AZURE_FS_SYNC_CONFIG_PATH env var on the server)
 curl -s $BASE/api/v1/repo/sync-pairs
@@ -261,6 +265,34 @@ curl -s $BASE/api/v1/repo/sync-pairs
 | 200 | Sync pairs listed successfully |
 | 400 | AZURE_FS_SYNC_CONFIG_PATH not configured on the server |
 | 500 | Config file read/parse failure |
+
+#### Search blobs by tags
+
+```bash
+# Search by source registry
+curl -s "$BASE/api/v1/repo/search?sourceRegistry=github"
+
+# Search by source path
+curl -s "$BASE/api/v1/repo/search?sourcePath=microsoft/typescript"
+
+# Search by sync time range
+curl -s "$BASE/api/v1/repo/search?syncTimeFrom=2026-01-01T00:00:00Z&syncTimeTo=2026-03-01T00:00:00Z"
+
+# Combined search with max results
+curl -s "$BASE/api/v1/repo/search?sourceRegistry=github&sourcePath=microsoft/typescript&maxResults=50"
+
+# Search within a specific container
+curl -s "$BASE/api/v1/repo/search?sourceRegistry=github&containerName=my-container"
+```
+
+**Response codes:**
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Search completed successfully |
+| 400 | Missing or invalid search parameters (at least one filter required) |
+| 401 | Azure Storage authentication not configured |
+| 500 | Blob search failed (Azure Storage error) |
 
 ---
 

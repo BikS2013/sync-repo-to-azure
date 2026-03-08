@@ -806,7 +806,7 @@ The config file (`.repo-sync.json`) is the recommended way to store non-secret c
 - Use `--config <path>` to specify an alternative path.
 - Use `repo-sync config init` to interactively create the file.
 
-**Important:** The config file must **not** contain secrets (connection strings, SAS tokens, PATs). Those must be provided as environment variables.
+**Important:** The `.repo-sync.json` config file must **not** contain secrets (connection strings, SAS tokens, PATs). For single-repo commands (`clone-github`, `clone-devops`), those must be provided as environment variables. **Note:** This rule does NOT apply to sync pair configuration files (e.g., `sync-settings.json`), which intentionally embed per-pair credentials (GitHub tokens, DevOps PATs, destination SAS tokens) because each pair is self-contained.
 
 ---
 
@@ -1023,6 +1023,8 @@ Choose based on how frequently your Azure Blob Storage blobs change and your tol
 ## Sync Pair Configuration
 
 The sync pair configuration is a **separate file** (not part of `.repo-sync.json`) used by the `repo sync` CLI command and the `POST /api/v1/repo/sync` API endpoint. It defines one or more repository-to-blob-storage replication pairs, each with its own source credentials and Azure Storage destination.
+
+> **IMPORTANT - Credential Source:** All authentication credentials for sync pair operations are retrieved exclusively from this sync pair configuration file, NOT from environment variables. Each sync pair carries its own `source.token` (GitHub), `source.pat` (DevOps), and `destination.sasToken`. This is fundamentally different from single-repo commands (`clone-github`, `clone-devops`) which read credentials from environment variables (`GITHUB_TOKEN`, `AZURE_DEVOPS_PAT`, `AZURE_STORAGE_SAS_TOKEN`).
 
 The `POST /api/v1/repo/sync` API endpoint accepts both **JSON** and **YAML** request bodies. Set the `Content-Type` header to `application/json` or `application/yaml` (also `application/x-yaml`, `text/yaml`) accordingly. YAML bodies are parsed by the `yaml-body-parser.middleware.ts` middleware using `js-yaml`.
 

@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import { RepoReplicationService } from "../../services/repo-replication.service";
+import { BlobSearchService } from "../../services/blob-search.service";
 import { RepoReplicationError } from "../../errors/repo-replication.error";
+import { BlobSearchError } from "../../errors/blob-search.error";
 import { Logger } from "../../utils/logger.utils";
 import {
   validateSyncPairConfig,
@@ -35,6 +37,7 @@ function buildResponse<T>(command: string, data: T, startTime: number) {
 export function createRepoController(
   repoService: RepoReplicationService,
   logger: Logger,
+  blobSearchService?: BlobSearchService,
 ) {
   return {
     /**
@@ -208,6 +211,58 @@ export function createRepoController(
           : 200;
 
       res.status(statusCode).json(buildResponse("repo-sync", result, startTime));
+    },
+
+    /**
+     * GET /api/v1/repo/search
+     * Search for blobs in Azure Blob Storage by metadata tags.
+     * Query params: sourceRegistry, sourcePath, syncTimeFrom, syncTimeTo,
+     *               containerName, maxResults
+     */
+    async searchBlobs(
+      req: Request,
+      res: Response,
+      _next: NextFunction,
+    ): Promise<void> {
+      const startTime = Date.now();
+
+      if (!blobSearchService) {
+        throw BlobSearchError.authMissing();
+      }
+
+      const {
+        sourceRegistry,
+        sourcePath,
+        syncTimeFrom,
+        syncTimeTo,
+        containerName,
+        maxResults,
+      } = req.query as {
+        sourceRegistry?: string;
+        sourcePath?: string;
+        syncTimeFrom?: string;
+        syncTimeTo?: string;
+        containerName?: string;
+        maxResults?: string;
+      };
+
+      const parsedMaxResults = maxResults ? parseInt(maxResults, 10) : undefined;
+      if (maxResults !== undefined && isNaN(parsedMaxResults!)) {
+        throw BlobSearchError.invalidParam("maxResults", "Must be a valid integer");
+      }
+
+      logger.info("API: Searching blobs by tags");
+
+      const result = await blobSearchService.searchByTags({
+        sourceRegistry,
+        sourcePath,
+        syncTimeFrom,
+        syncTimeTo,
+        containerName,
+        maxResults: parsedMaxResults,
+      });
+
+      res.status(200).json(buildResponse("blob-search", result, startTime));
     },
   };
 }

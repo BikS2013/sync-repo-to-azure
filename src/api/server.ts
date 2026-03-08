@@ -4,7 +4,8 @@ import * as http from "http";
 import { ApiResolvedConfig } from "../types/api-config.types";
 import { resolveApiConfig } from "../config/config.loader";
 import { RepoReplicationService } from "../services/repo-replication.service";
-import { createContainerClient } from "../services/auth.service";
+import { BlobSearchService } from "../services/blob-search.service";
+import { createBlobServiceClient, createContainerClient } from "../services/auth.service";
 import { Logger } from "../utils/logger.utils";
 import { PortChecker } from "../utils/port-checker.utils";
 import swaggerUi from "swagger-ui-express";
@@ -31,6 +32,7 @@ export function createApp(
   actualPort?: number,
   consoleCommands?: ConsoleCommands,
   repoReplicationService?: RepoReplicationService,
+  blobSearchService?: BlobSearchService,
 ): Express {
   const app = express();
 
@@ -70,6 +72,7 @@ export function createApp(
     sourceTracker: config.sourceTracker,
     consoleCommands,
     repoReplicationService,
+    blobSearchService,
   };
   registerApiRoutes(app, services);
 
@@ -116,6 +119,19 @@ export async function startServer(): Promise<void> {
   }
   const repoReplicationService = new RepoReplicationService(config, containerClient, logger);
 
+  // 3b. Create blob search service (requires BlobServiceClient, only available when storage is configured)
+  let blobSearchService: BlobSearchService | undefined;
+  if (config.storage) {
+    try {
+      const blobServiceClient = createBlobServiceClient(config);
+      blobSearchService = new BlobSearchService(blobServiceClient, logger);
+      logger.info("Blob search service initialized");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn(`Blob search service not available: ${message}`);
+    }
+  }
+
   // 4. Check port availability (proactive port check)
   let actualPort = config.api.port;
   const isAvailable = await PortChecker.isPortAvailable(config.api.port, config.api.host);
@@ -161,6 +177,7 @@ export async function startServer(): Promise<void> {
     actualPort !== config.api.port ? actualPort : undefined,
     consoleCommands ?? undefined,
     repoReplicationService,
+    blobSearchService,
   );
 
   // 7. Start HTTP server

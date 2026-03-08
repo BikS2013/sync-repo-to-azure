@@ -14,6 +14,7 @@ import {
   DevOpsRepoParams,
   RepoReplicationResult,
   RepoFileUploadResult,
+  BlobUploadMetadata,
   SyncPairConfig,
   SyncPair,
   GitHubSyncPair,
@@ -442,6 +443,7 @@ export class RepoReplicationService {
       failedFiles: [],
     };
 
+    const syncTime = new Date().toISOString();
     const extract = tarStream.extract();
     const gunzip = zlib.createGunzip();
 
@@ -496,7 +498,13 @@ export class RepoReplicationService {
           const blobPath = normalizePath(destPath + "/" + strippedPath);
           stats.totalFiles++;
 
-          this.uploadEntryToBlob(client, blobPath, entryStream, header.size)
+          const blobMetadata: BlobUploadMetadata = {
+            source_registry: repoIdentifier,
+            source_path: strippedPath,
+            sync_time: syncTime,
+          };
+
+          this.uploadEntryToBlob(client, blobPath, entryStream, header.size, blobMetadata)
             .then((result) => {
               if (result.success) {
                 stats.successCount++;
@@ -572,6 +580,7 @@ export class RepoReplicationService {
       failedFiles: [],
     };
 
+    const syncTime = new Date().toISOString();
     const parser = unzipper.Parse();
 
     return new Promise<StreamingStats>((resolve, reject) => {
@@ -622,8 +631,14 @@ export class RepoReplicationService {
         // Convert the Entry to a Readable for uploadEntryToBlob
         const entryAsReadable = entry as unknown as Readable;
 
+        const blobMetadata: BlobUploadMetadata = {
+          source_registry: repoIdentifier,
+          source_path: entryPath,
+          sync_time: syncTime,
+        };
+
         // Track the upload promise so we can await all uploads before resolving
-        const uploadPromise = this.uploadEntryToBlob(client, blobPath, entryAsReadable, size)
+        const uploadPromise = this.uploadEntryToBlob(client, blobPath, entryAsReadable, size, blobMetadata)
           .then((result) => {
             if (result.success) {
               stats.successCount++;
@@ -692,10 +707,29 @@ export class RepoReplicationService {
     blobPath: string,
     entryStream: Readable,
     size?: number,
+    blobMetadata?: BlobUploadMetadata,
   ): Promise<{ success: boolean; size: number; error?: string }> {
     try {
       const blockBlobClient =
         containerClient.getBlockBlobClient(blobPath);
+
+      // Build metadata and tags from BlobUploadMetadata if provided
+      const metadata: Record<string, string> | undefined = blobMetadata
+        ? {
+            source_registry: blobMetadata.source_registry,
+            source_path: blobMetadata.source_path,
+            sync_time: blobMetadata.sync_time,
+          }
+        : undefined;
+
+      const tags: Record<string, string> | undefined = blobMetadata
+        ? {
+            source_registry: blobMetadata.source_registry,
+            // Blob index tags have a 256-char value limit
+            source_path: blobMetadata.source_path.substring(0, 256),
+            sync_time: blobMetadata.sync_time,
+          }
+        : undefined;
 
       if (size !== undefined && size < SMALL_FILE_THRESHOLD) {
         // Small file: buffer and upload in one call
@@ -705,7 +739,24 @@ export class RepoReplicationService {
         }
         const buffer = Buffer.concat(chunks);
 
-        await blockBlobClient.upload(buffer, buffer.length);
+        try {
+          await blockBlobClient.upload(buffer, buffer.length, {
+            metadata,
+            tags,
+          });
+        } catch (uploadErr: unknown) {
+          // If tag permission error, retry with metadata only
+          if (tags && this.isTagPermissionError(uploadErr)) {
+            this.logger.warn(
+              `Tag permission error for ${blobPath}, retrying with metadata only`,
+            );
+            await blockBlobClient.upload(buffer, buffer.length, {
+              metadata,
+            });
+          } else {
+            throw uploadErr;
+          }
+        }
 
         return { success: true, size: buffer.length };
       } else {
@@ -718,7 +769,10 @@ export class RepoReplicationService {
           },
         });
 
-        await blockBlobClient.uploadStream(entryStream.pipe(counter));
+        await blockBlobClient.uploadStream(entryStream.pipe(counter), undefined, undefined, {
+          metadata,
+          tags,
+        });
 
         return { success: true, size: bytesWritten };
       }
@@ -726,6 +780,22 @@ export class RepoReplicationService {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, size: 0, error: message };
     }
+  }
+
+  /**
+   * Checks whether an error is a tag permission error from Azure Blob Storage,
+   * indicating the SAS token or auth method does not support blob index tags.
+   */
+  private isTagPermissionError(error: unknown): boolean {
+    if (error instanceof Error) {
+      const msg = error.message || "";
+      return (
+        msg.includes("BlobTagsNotSupportedForSasToken") ||
+        (msg.includes("AuthorizationPermissionMismatch") &&
+          msg.includes("tag"))
+      );
+    }
+    return false;
   }
 
   // -----------------------------------------------------------------------

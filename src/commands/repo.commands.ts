@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import { resolveConfig } from "../config/config.loader";
-import { createContainerClient } from "../services/auth.service";
+import { createBlobServiceClient, createContainerClient } from "../services/auth.service";
 import { RepoReplicationService } from "../services/repo-replication.service";
+import { BlobSearchService } from "../services/blob-search.service";
 import {
   formatSuccess,
   formatErrorFromException,
@@ -180,6 +181,48 @@ export function registerRepoCommands(program: Command): void {
         outputResult(output, jsonMode);
       } catch (err) {
         const output = formatErrorFromException(err, "repo list-sync-pairs", startTime);
+        outputResult(output, jsonMode);
+        process.exitCode = exitCodeForError(err);
+      }
+    });
+
+  // --- search-blobs ---
+  repo
+    .command("search-blobs")
+    .description("Search for blobs in Azure Blob Storage by metadata tags (source_registry, source_path, sync_time)")
+    .option("--source-registry <registry>", "Filter by source_registry tag (exact match)")
+    .option("--source-path <path>", "Filter by source_path tag (exact match)")
+    .option("--sync-time-from <date>", "Filter by sync_time tag >= this ISO 8601 date")
+    .option("--sync-time-to <date>", "Filter by sync_time tag <= this ISO 8601 date")
+    .option("--container <name>", "Restrict search to a specific container")
+    .option("--max-results <count>", "Maximum number of results (1-5000, default 100)")
+    .action(async (options: Record<string, unknown>, cmd: Command) => {
+      const startTime = Date.now();
+      const globalOpts = cmd.parent!.parent!.opts();
+      const jsonMode = globalOpts.json === true;
+
+      try {
+        const config = resolveConfig(globalOpts);
+        const logger = new Logger(config.logging.level, globalOpts.verbose === true);
+        const blobServiceClient = createBlobServiceClient(config);
+        const service = new BlobSearchService(blobServiceClient, logger);
+
+        const maxResultsRaw = options["maxResults"] as string | undefined;
+        const maxResults = maxResultsRaw ? parseInt(maxResultsRaw, 10) : undefined;
+
+        const result = await service.searchByTags({
+          sourceRegistry: options["sourceRegistry"] as string | undefined,
+          sourcePath: options["sourcePath"] as string | undefined,
+          syncTimeFrom: options["syncTimeFrom"] as string | undefined,
+          syncTimeTo: options["syncTimeTo"] as string | undefined,
+          containerName: options["container"] as string | undefined,
+          maxResults,
+        });
+
+        const output = formatSuccess(result, "repo search-blobs", startTime);
+        outputResult(output, jsonMode);
+      } catch (err) {
+        const output = formatErrorFromException(err, "repo search-blobs", startTime);
         outputResult(output, jsonMode);
         process.exitCode = exitCodeForError(err);
       }
